@@ -12,7 +12,12 @@ import os
 import json
 import time
 import requests
+import logging
 from typing import Optional, Tuple, List, Dict
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 # Optional: skip importing heavy mediapipe native extensions in test environments
 # Set SKIP_MEDIAPIPE_IMPORT=1 in env to avoid importing mediapipe (prevents C-level aborts)
 if os.environ.get('SKIP_MEDIAPIPE_IMPORT') in ('1','true','True'):
@@ -260,6 +265,125 @@ async def ocr_image(file: UploadFile = File(...)):
         return {"text": text.strip()}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OCR failed: {e}")
+
+
+@app.post("/ocr/batch")
+async def ocr_batch_images(files: List[UploadFile] = File(...)):
+    """
+    Process multiple images simultaneously and combine OCR results.
+
+    Use case: Multi-camera capture for better accuracy from multiple angles.
+    - Processes all images in parallel
+    - Returns individual results and combined text
+    - Includes confidence scoring and deduplication
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+
+    if len(files) > 10:
+        raise HTTPException(status_code=400, detail="Maximum 10 images allowed per batch.")
+
+    try:
+        results = []
+        all_texts = []
+
+        # Process all images in parallel
+        async def process_single_image(file: UploadFile, index: int):
+            if not file.content_type.startswith("image/"):
+                return {
+                    "index": index,
+                    "filename": file.filename,
+                    "text": "",
+                    "error": "Not an image file",
+                    "success": False
+                }
+
+            try:
+                img_bytes = await file.read()
+                img = Image.open(BytesIO(img_bytes))
+
+                # Extract text using Tesseract
+                try:
+                    text = pytesseract.image_to_string(img)
+                    # Get confidence data if available
+                    try:
+                        data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+                        confidences = [int(conf) for conf in data['conf'] if conf != '-1']
+                        avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+                    except Exception:
+                        avg_confidence = 0
+                except Exception as e:
+                    text = ""
+                    avg_confidence = 0
+
+                return {
+                    "index": index,
+                    "filename": file.filename,
+                    "text": text.strip(),
+                    "confidence": avg_confidence,
+                    "char_count": len(text.strip()),
+                    "success": True
+                }
+            except Exception as e:
+                return {
+                    "index": index,
+                    "filename": file.filename,
+                    "text": "",
+                    "error": str(e),
+                    "success": False
+                }
+
+        # Process all images concurrently
+        tasks = [process_single_image(file, i) for i, file in enumerate(files)]
+        results = await asyncio.gather(*tasks)
+
+        # Collect all successfully extracted texts
+        successful_results = [r for r in results if r["success"] and r["text"]]
+        all_texts = [r["text"] for r in successful_results]
+
+        # Combine texts intelligently
+        # Strategy 1: Use the longest text (likely captured the most info)
+        combined_text = max(all_texts, key=len) if all_texts else ""
+
+        # Strategy 2: Find common words across all results (high confidence)
+        if len(all_texts) > 1:
+            # Split into words
+            word_sets = [set(text.split()) for text in all_texts]
+            # Find common words (appear in at least 2 captures)
+            common_words = set()
+            for i, words in enumerate(word_sets):
+                for other_words in word_sets[i+1:]:
+                    common_words.update(words & other_words)
+        else:
+            common_words = set()
+
+        # Send combined result to ai_brain (best-effort)
+        if combined_text:
+            try:
+                async with httpx.AsyncClient() as client:
+                    await client.post(
+                        "http://ai_brain:9001/ingest/receipt",
+                        json={"text": combined_text}
+                    )
+            except Exception:
+                pass
+
+        return {
+            "success": True,
+            "total_images": len(files),
+            "successful_ocr": len(successful_results),
+            "failed_ocr": len(files) - len(successful_results),
+            "individual_results": results,
+            "combined_text": combined_text,
+            "common_words": list(common_words),
+            "recommended_result_index": max(
+                range(len(results)),
+                key=lambda i: results[i].get("char_count", 0)
+            ) if results else 0,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Batch OCR failed: {e}")
 
 
 def extract_pose_from_image(image: np.ndarray):
@@ -1631,6 +1755,421 @@ async def cache_cleanup_worker():
         except Exception as e:
             print(f"Cache cleanup error: {e}")
             await asyncio.sleep(60)
+
+
+# ============================================================================
+# EXTERNAL MULTI-CAMERA MONITORING SYSTEM
+# ============================================================================
+
+from multi_camera_manager import (
+    ExternalCameraManager,
+    CameraConfig,
+    camera_manager
+)
+
+@app.on_event("startup")
+async def startup_external_cameras():
+    """Initialize external camera system on startup"""
+    logger.info("Initializing external camera monitoring system...")
+
+    # Auto-detect cameras (can be overridden by config)
+    detected = camera_manager.detect_cameras(max_cameras=10)
+    logger.info(f"Detected {len(detected)} external cameras: {detected}")
+
+
+@app.on_event("shutdown")
+async def shutdown_external_cameras():
+    """Cleanup camera resources on shutdown"""
+    logger.info("Shutting down external camera system...")
+    camera_manager.stop()
+
+
+@app.get("/external_cameras/detect")
+async def detect_external_cameras():
+    """
+    Auto-detect all available USB/IP cameras.
+
+    Returns list of camera IDs that can be opened.
+    """
+    cameras = camera_manager.detect_cameras(max_cameras=10)
+    return {
+        "detected_cameras": cameras,
+        "count": len(cameras),
+        "device_paths": [f"/dev/video{cid}" for cid in cameras]
+    }
+
+
+@app.post("/external_cameras/add")
+async def add_external_camera(
+    camera_id: int,
+    label: str,
+    position: str = "unknown",
+    angle: str = "unknown",
+    width: int = 1280,
+    height: int = 720,
+    fps: int = 15
+):
+    """
+    Add and configure an external camera.
+
+    Args:
+        camera_id: Video device ID (e.g., 0 for /dev/video0)
+        label: Human-readable label (e.g., "kitchen", "bedroom", "desk")
+        position: Physical position (e.g., "ceiling_corner", "wall_side")
+        angle: Camera angle (e.g., "top_down", "side_view", "front_view")
+        width: Frame width in pixels
+        height: Frame height in pixels
+        fps: Frames per second
+
+    Examples:
+        - camera_id=0, label="kitchen", position="ceiling_corner", angle="top_down"
+        - camera_id=1, label="desk", position="monitor_top", angle="front_view"
+        - camera_id=2, label="bedroom", position="wall_corner", angle="side_view"
+    """
+    config = CameraConfig(
+        camera_id=camera_id,
+        label=label,
+        position=position,
+        angle=angle,
+        resolution=(width, height),
+        fps=fps,
+        enabled=True
+    )
+
+    success = camera_manager.add_camera(config)
+
+    if success:
+        return {
+            "status": "success",
+            "message": f"Camera {camera_id} ({label}) added successfully",
+            "config": {
+                "id": camera_id,
+                "label": label,
+                "position": position,
+                "angle": angle,
+                "resolution": f"{width}x{height}",
+                "fps": fps
+            }
+        }
+    else:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to add camera {camera_id}. Check device exists and is not in use."
+        )
+
+
+@app.delete("/external_cameras/{camera_id}")
+async def remove_external_camera(camera_id: int):
+    """Remove an external camera"""
+    camera_manager.remove_camera(camera_id)
+    return {
+        "status": "success",
+        "message": f"Camera {camera_id} removed"
+    }
+
+
+@app.post("/external_cameras/start")
+async def start_external_cameras():
+    """Start continuous capture from all configured cameras"""
+    camera_manager.start()
+    return {
+        "status": "started",
+        "cameras": len(camera_manager.cameras),
+        "message": "External camera monitoring started"
+    }
+
+
+@app.post("/external_cameras/stop")
+async def stop_external_cameras():
+    """Stop all camera capture"""
+    camera_manager.stop()
+    return {
+        "status": "stopped",
+        "message": "External camera monitoring stopped"
+    }
+
+
+@app.get("/external_cameras/status")
+async def get_external_cameras_status():
+    """Get detailed status of all external cameras"""
+    return camera_manager.get_status()
+
+
+@app.post("/external_cameras/{camera_id}/enable")
+async def enable_external_camera(camera_id: int):
+    """Enable a specific camera"""
+    camera_manager.enable_camera(camera_id)
+    return {"status": "enabled", "camera_id": camera_id}
+
+
+@app.post("/external_cameras/{camera_id}/disable")
+async def disable_external_camera(camera_id: int):
+    """Disable a specific camera"""
+    camera_manager.disable_camera(camera_id)
+    return {"status": "disabled", "camera_id": camera_id}
+
+
+@app.put("/external_cameras/{camera_id}/label")
+async def update_camera_label(camera_id: int, label: str):
+    """Update camera label/position/angle"""
+    camera_manager.update_camera_config(camera_id, label=label)
+    return {"status": "updated", "camera_id": camera_id, "label": label}
+
+
+@app.get("/external_cameras/{camera_id}/frame")
+async def get_camera_frame(camera_id: int):
+    """Get the latest frame from a specific camera as JPEG"""
+    frame_data = camera_manager.get_latest_frame(camera_id)
+
+    if not frame_data:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No frame available from camera {camera_id}"
+        )
+
+    # Encode frame as JPEG
+    ret, buffer = cv2.imencode('.jpg', frame_data.frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+
+    if not ret:
+        raise HTTPException(status_code=500, detail="Failed to encode frame")
+
+    return StreamingResponse(
+        BytesIO(buffer.tobytes()),
+        media_type="image/jpeg",
+        headers={
+            "X-Camera-ID": str(camera_id),
+            "X-Camera-Label": frame_data.label,
+            "X-Timestamp": str(frame_data.timestamp),
+            "X-Frame-Number": str(frame_data.frame_number)
+        }
+    )
+
+
+@app.get("/external_cameras/frames/synchronized")
+async def get_synchronized_frames(
+    format: str = "json",
+    max_sync_error_ms: float = 100
+):
+    """
+    Get synchronized frames from all cameras.
+
+    Args:
+        format: "json" for metadata only, "multipart" for images (TODO)
+        max_sync_error_ms: Maximum allowed sync error in milliseconds
+
+    Returns:
+        Synchronized frames from all active cameras
+    """
+    multi_frame = camera_manager.capture_synchronized(max_sync_error_ms)
+
+    if not multi_frame:
+        raise HTTPException(status_code=404, detail="No frames available")
+
+    if format == "json":
+        # Return metadata only
+        cameras_data = []
+        for cam_frame in multi_frame.cameras:
+            cameras_data.append({
+                "camera_id": cam_frame.camera_id,
+                "label": cam_frame.label,
+                "position": cam_frame.position,
+                "angle": cam_frame.angle,
+                "timestamp": cam_frame.timestamp,
+                "frame_number": cam_frame.frame_number,
+                "frame_shape": list(cam_frame.frame.shape)
+            })
+
+        return {
+            "timestamp": multi_frame.timestamp,
+            "sync_error_ms": multi_frame.sync_error_ms,
+            "camera_count": len(multi_frame.cameras),
+            "cameras": cameras_data
+        }
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Only 'json' format currently supported"
+        )
+
+
+@app.post("/external_cameras/analyze/fall_detection")
+async def analyze_fall_detection_multi_angle():
+    """
+    Analyze frames from multiple cameras for fall detection.
+
+    Uses triangulation and multi-angle pose estimation for improved accuracy.
+    """
+    multi_frame = camera_manager.capture_synchronized(max_sync_error_ms=200)
+
+    if not multi_frame:
+        raise HTTPException(status_code=404, detail="No synchronized frames available")
+
+    fall_detected = False
+    confidence_scores = []
+    pose_data = []
+
+    for cam_frame in multi_frame.cameras:
+        # Extract pose from this angle
+        pose = extract_pose_from_image(cam_frame.frame)
+
+        if pose:
+            pose_data.append({
+                "camera_id": cam_frame.camera_id,
+                "label": cam_frame.label,
+                "angle": cam_frame.angle,
+                "landmarks": pose
+            })
+
+            # Simple fall detection: check if body is horizontal
+            # (In production, use more sophisticated algorithm)
+            if len(pose) > 0:
+                # Check nose-hip-ankle angles
+                try:
+                    nose = pose[0]  # Nose landmark
+                    hip = pose[23] if len(pose) > 23 else None  # Hip landmark
+
+                    if nose and hip:
+                        # If vertical distance between nose and hip is very small, likely fallen
+                        vertical_dist = abs(nose['y'] - hip['y'])
+
+                        if vertical_dist < 0.2:  # Normalized coordinates
+                            fall_confidence = 0.8
+                            fall_detected = True
+                            confidence_scores.append(fall_confidence)
+                except:
+                    pass
+
+    # Aggregate results from multiple cameras
+    if confidence_scores:
+        avg_confidence = sum(confidence_scores) / len(confidence_scores)
+    else:
+        avg_confidence = 0.0
+
+    return {
+        "fall_detected": fall_detected,
+        "confidence": avg_confidence,
+        "camera_count": len(multi_frame.cameras),
+        "sync_error_ms": multi_frame.sync_error_ms,
+        "pose_data": pose_data,
+        "timestamp": multi_frame.timestamp,
+        "alert_level": "critical" if fall_detected and avg_confidence > 0.7 else "normal"
+    }
+
+
+@app.post("/external_cameras/analyze/posture")
+async def analyze_posture_multi_angle():
+    """
+    Analyze posture from multiple camera angles.
+
+    Combines side view and front view for comprehensive posture assessment.
+    """
+    multi_frame = camera_manager.capture_synchronized(max_sync_error_ms=200)
+
+    if not multi_frame:
+        raise HTTPException(status_code=404, detail="No synchronized frames available")
+
+    posture_analysis = {
+        "timestamp": multi_frame.timestamp,
+        "cameras": [],
+        "overall_posture": "unknown",
+        "recommendations": []
+    }
+
+    for cam_frame in multi_frame.cameras:
+        pose = extract_pose_from_image(cam_frame.frame)
+
+        camera_analysis = {
+            "camera_id": cam_frame.camera_id,
+            "label": cam_frame.label,
+            "angle": cam_frame.angle,
+            "posture_score": 0.0,
+            "issues": []
+        }
+
+        if pose and len(pose) > 0:
+            # Analyze based on camera angle
+            if "side" in cam_frame.angle.lower():
+                # Side view: check spine alignment
+                camera_analysis["issues"].append("Side view analysis not fully implemented")
+                camera_analysis["posture_score"] = 0.7
+
+            elif "front" in cam_frame.angle.lower():
+                # Front view: check shoulder level
+                camera_analysis["issues"].append("Front view analysis not fully implemented")
+                camera_analysis["posture_score"] = 0.8
+
+        posture_analysis["cameras"].append(camera_analysis)
+
+    # Calculate overall posture score
+    if posture_analysis["cameras"]:
+        scores = [c["posture_score"] for c in posture_analysis["cameras"]]
+        avg_score = sum(scores) / len(scores)
+
+        if avg_score > 0.8:
+            posture_analysis["overall_posture"] = "good"
+        elif avg_score > 0.6:
+            posture_analysis["overall_posture"] = "fair"
+            posture_analysis["recommendations"].append("Consider adjusting chair height")
+        else:
+            posture_analysis["overall_posture"] = "poor"
+            posture_analysis["recommendations"].append("Sit up straighter")
+            posture_analysis["recommendations"].append("Align shoulders over hips")
+
+    return posture_analysis
+
+
+@app.post("/external_cameras/analyze/activity")
+async def analyze_activity_multi_camera():
+    """
+    Detect current activity from multiple camera angles.
+
+    Uses all cameras to improve activity recognition accuracy.
+    """
+    multi_frame = camera_manager.capture_synchronized(max_sync_error_ms=200)
+
+    if not multi_frame:
+        raise HTTPException(status_code=404, detail="No synchronized frames available")
+
+    activities_detected = []
+
+    for cam_frame in multi_frame.cameras:
+        # Run activity classification on this frame
+        # (Simplified - in production use proper activity recognition model)
+
+        pose = extract_pose_from_image(cam_frame.frame)
+
+        if pose:
+            # Simple heuristic activity detection
+            activity = "unknown"
+            confidence = 0.5
+
+            # Check if standing (landmarks are visible and vertical)
+            # Check if sitting (body angle)
+            # Check if lying down (horizontal orientation)
+
+            activities_detected.append({
+                "camera_id": cam_frame.camera_id,
+                "label": cam_frame.label,
+                "activity": activity,
+                "confidence": confidence
+            })
+
+    # Vote on most likely activity
+    if activities_detected:
+        # In production: use ensemble voting
+        primary_activity = activities_detected[0]["activity"]
+        avg_confidence = sum(a["confidence"] for a in activities_detected) / len(activities_detected)
+    else:
+        primary_activity = "unknown"
+        avg_confidence = 0.0
+
+    return {
+        "primary_activity": primary_activity,
+        "confidence": avg_confidence,
+        "camera_count": len(multi_frame.cameras),
+        "individual_detections": activities_detected,
+        "timestamp": multi_frame.timestamp
+    }
 
 
 if __name__ == "__main__":

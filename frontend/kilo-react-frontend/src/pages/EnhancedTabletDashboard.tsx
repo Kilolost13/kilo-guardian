@@ -16,9 +16,15 @@ const EnhancedTabletDashboard: React.FC = () => {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
+  const [showPrescriptionScanner, setShowPrescriptionScanner] = useState(false);
   const [showVoiceInput, setShowVoiceInput] = useState(false);
   const [manualInputMode, setManualInputMode] = useState(false);
+  const [prescriptionResult, setPrescriptionResult] = useState<any>(null);
+  const [scanningPrescription, setScanningPrescription] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
 
   // Enhanced state for tablet UI
   const [stats, setStats] = useState<DashboardStats>({
@@ -63,6 +69,15 @@ const EnhancedTabletDashboard: React.FC = () => {
   useEffect(() => {
     fetchDashboardData();
   }, []);
+
+  // Cleanup camera stream on unmount
+  useEffect(() => {
+    return () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [cameraStream]);
 
   const fetchDashboardData = async () => {
     try {
@@ -176,6 +191,100 @@ const EnhancedTabletDashboard: React.FC = () => {
     alert('Receipt captured! Processing...');
   };
 
+  // Prescription scanning functions
+  const startPrescriptionScanning = async () => {
+    setShowPrescriptionScanner(true);
+    setPrescriptionResult(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: 'environment', // Prefer back camera
+          width: { ideal: 1920 },
+          height: { ideal: 1080 }
+        }
+      });
+
+      setCameraStream(stream);
+
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+      }
+    } catch (error) {
+      console.error('Error accessing camera:', error);
+      alert('Failed to access camera. Please grant camera permissions.');
+      setShowPrescriptionScanner(false);
+    }
+  };
+
+  const stopPrescriptionScanning = () => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(track => track.stop());
+      setCameraStream(null);
+    }
+    setShowPrescriptionScanner(false);
+    setPrescriptionResult(null);
+  };
+
+  const capturePrescription = async () => {
+    if (!videoRef.current || !canvasRef.current) return;
+
+    setScanningPrescription(true);
+
+    try {
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+
+      // Set canvas dimensions to video dimensions
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+
+      // Draw video frame to canvas
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('Failed to get canvas context');
+      }
+
+      ctx.drawImage(video, 0, 0);
+
+      // Convert canvas to blob
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob);
+          else reject(new Error('Failed to create image blob'));
+        }, 'image/jpeg', 0.95);
+      });
+
+      // Send to prescription analysis API
+      const formData = new FormData();
+      formData.append('image', blob, 'prescription.jpg');
+
+      const response = await fetch('http://localhost:8000/ai_brain/analyze/prescription', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      setPrescriptionResult(result);
+
+      // Stop camera stream after successful capture
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(track => track.stop());
+        setCameraStream(null);
+      }
+
+    } catch (error) {
+      console.error('Error capturing prescription:', error);
+      alert('Failed to analyze prescription. Please try again.');
+    } finally {
+      setScanningPrescription(false);
+    }
+  };
+
   const quickActions = [
     { icon: '💊', label: 'MEDS', path: '/medications', color: 'bg-blue-500' },
     { icon: '🔔', label: 'REMINDERS', path: '/reminders', color: 'bg-green-500' },
@@ -187,12 +296,21 @@ const EnhancedTabletDashboard: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 p-4">
       {/* Header */}
-      <div className="flex justify-between items-center mb-6">
+      <div className="flex justify-between items-center mb-4">
         <h1 className="text-3xl font-bold text-white flex items-center gap-3">
           {React.createElement(FaBrain as any, { className: 'text-blue-400 text-4xl' })}
           KILO AI MEMORY ASSISTANT
         </h1>
         <div className="flex items-center gap-4">
+          <Button
+            onClick={startPrescriptionScanning}
+            variant="primary"
+            size="lg"
+            className="h-16 px-6 flex items-center gap-3 text-xl bg-green-600 hover:bg-green-700"
+          >
+            <span className="text-2xl">💊</span>
+            SCAN PRESCRIPTION
+          </Button>
           <Button
             onClick={() => navigate('/admin')}
             variant="secondary"
@@ -202,21 +320,13 @@ const EnhancedTabletDashboard: React.FC = () => {
             {React.createElement(FaUser as any, null)}
             Admin
           </Button>
-          <Button
-            onClick={() => navigate('/ui-comparison')}
-            variant="primary"
-            size="sm"
-            className="flex items-center gap-2"
-          >
-            📱 UI COMPARISON
-          </Button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Main Chat Area */}
+        {/* Main Chat Area - REDUCED HEIGHT FOR LANDSCAPE */}
         <div className="lg:col-span-2">
-          <Card className="h-[600px] flex flex-col">
+          <Card className="h-[400px] flex flex-col">
             <div className="flex-1 overflow-y-auto p-4 space-y-4" ref={messagesEndRef}>
               {messages.map((message) => (
                 <div
@@ -334,7 +444,7 @@ const EnhancedTabletDashboard: React.FC = () => {
         </div>
 
         {/* Sidebar - Stats and Quick Actions */}
-        <div className="space-y-6">
+        <div className="space-y-4">
           {/* Quick Actions - Large tablet-friendly buttons */}
           <Card>
             <h3 className="text-xl font-semibold text-white mb-4">Quick Actions</h3>
@@ -360,7 +470,7 @@ const EnhancedTabletDashboard: React.FC = () => {
               {React.createElement(FaBell as any, { className: 'text-yellow-400' })}
               Real-time Updates
             </h3>
-            <div className="space-y-2">
+            <div className="space-y-2 max-h-40 overflow-y-auto">
               {realTimeUpdates.map((update) => (
                 <div key={update.id} className="bg-blue-900/20 border border-blue-600/30 rounded-lg p-3">
                   <p className="text-sm text-blue-200">{update.message}</p>
@@ -378,7 +488,7 @@ const EnhancedTabletDashboard: React.FC = () => {
               {React.createElement(FaLightbulb as any, { className: 'text-purple-400' })}
               AI Coaching
             </h3>
-            <div className="space-y-3">
+            <div className="space-y-3 max-h-40 overflow-y-auto">
               {insights.map((insight) => (
                 <div key={insight.id} className="bg-purple-900/20 border border-purple-600/30 rounded-lg p-3">
                   <h4 className="font-semibold text-purple-200">{insight.title}</h4>
@@ -387,36 +497,130 @@ const EnhancedTabletDashboard: React.FC = () => {
               ))}
             </div>
           </Card>
-
-          {/* Dashboard Stats */}
-          <Card>
-            <h3 className="text-lg font-semibold text-white mb-3 flex items-center gap-2">
-              {React.createElement(FaChartLine as any, { className: 'text-green-400' })}
-              Dashboard Stats
-            </h3>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-gray-800/50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-green-400">{stats.totalMemories}</div>
-                <div className="text-xs text-gray-400">Memories</div>
-              </div>
-              <div className="bg-gray-800/50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-blue-400">{stats.activeHabits}</div>
-                <div className="text-xs text-gray-400">Active Habits</div>
-              </div>
-              <div className="bg-gray-800/50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-yellow-400">{stats.streakDays}</div>
-                <div className="text-xs text-gray-400">Day Streak</div>
-              </div>
-              <div className="bg-gray-800/50 rounded-lg p-3 text-center">
-                <div className="text-2xl font-bold text-purple-400">{stats.goalsProgress}%</div>
-                <div className="text-xs text-gray-400">Goals Progress</div>
-              </div>
-            </div>
-          </Card>
         </div>
       </div>
 
-      {/* Camera Modal */}
+      {/* Prescription Scanner Modal - FULL SCREEN */}
+      {showPrescriptionScanner && (
+        <div className="fixed inset-0 bg-black z-50 flex flex-col">
+          {/* Header */}
+          <div className="bg-gradient-to-r from-green-600 to-green-700 p-4 flex justify-between items-center">
+            <h2 className="text-2xl font-bold text-white flex items-center gap-3">
+              <span className="text-3xl">💊</span>
+              Scan Prescription
+            </h2>
+            <Button
+              onClick={stopPrescriptionScanning}
+              variant="danger"
+              size="lg"
+              className="px-6 h-14 text-xl"
+            >
+              ✕ Close
+            </Button>
+          </div>
+
+          {!prescriptionResult ? (
+            <>
+              {/* Camera Preview */}
+              <div className="flex-1 relative bg-black">
+                <video
+                  ref={videoRef}
+                  autoPlay
+                  playsInline
+                  className="w-full h-full object-contain"
+                />
+
+                {/* Overlay guide */}
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="border-4 border-green-400 border-dashed rounded-2xl w-[80%] h-[60%] flex items-center justify-center">
+                    <p className="text-white text-2xl bg-black/50 px-6 py-3 rounded-lg">
+                      Position prescription bottle or label here
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Capture Button */}
+              <div className="p-6 bg-gray-900 flex justify-center">
+                <Button
+                  onClick={capturePrescription}
+                  variant="primary"
+                  size="lg"
+                  disabled={scanningPrescription}
+                  className="h-20 px-12 text-2xl bg-green-600 hover:bg-green-700 flex items-center gap-3"
+                >
+                  {scanningPrescription ? (
+                    <>
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white"></div>
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      📷 CAPTURE & ANALYZE
+                    </>
+                  )}
+                </Button>
+              </div>
+            </>
+          ) : (
+            /* Results Display */
+            <div className="flex-1 overflow-y-auto p-6 bg-gray-900">
+              <div className="max-w-4xl mx-auto space-y-6">
+                <div className="bg-green-900/30 border-2 border-green-600 rounded-2xl p-6">
+                  <h3 className="text-3xl font-bold text-green-400 mb-4">✓ OCR Complete</h3>
+
+                  {/* Extracted Text */}
+                  <div className="bg-black/50 rounded-xl p-6 mb-6">
+                    <h4 className="text-xl font-semibold text-white mb-3">Extracted Text:</h4>
+                    <pre className="text-lg text-gray-200 whitespace-pre-wrap font-mono">
+                      {prescriptionResult.text || prescriptionResult.ocr_text || 'No text extracted'}
+                    </pre>
+                  </div>
+
+                  {/* Analysis Results */}
+                  {prescriptionResult.analysis && (
+                    <div className="bg-blue-900/30 border border-blue-600 rounded-xl p-6">
+                      <h4 className="text-xl font-semibold text-blue-300 mb-3">AI Analysis:</h4>
+                      <div className="text-lg text-blue-200 space-y-2">
+                        {typeof prescriptionResult.analysis === 'string' ? (
+                          <p>{prescriptionResult.analysis}</p>
+                        ) : (
+                          <pre className="whitespace-pre-wrap">{JSON.stringify(prescriptionResult.analysis, null, 2)}</pre>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Action Buttons */}
+                  <div className="flex gap-4 mt-6">
+                    <Button
+                      onClick={startPrescriptionScanning}
+                      variant="primary"
+                      size="lg"
+                      className="flex-1 h-16 text-xl"
+                    >
+                      📷 Scan Another
+                    </Button>
+                    <Button
+                      onClick={stopPrescriptionScanning}
+                      variant="secondary"
+                      size="lg"
+                      className="flex-1 h-16 text-xl"
+                    >
+                      ✓ Done
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Hidden canvas for image capture */}
+          <canvas ref={canvasRef} className="hidden" />
+        </div>
+      )}
+
+      {/* Receipt Camera Modal */}
       {showCamera && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-6 rounded-2xl max-w-md w-full mx-4">
