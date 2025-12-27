@@ -22,6 +22,10 @@ code {
     text-shadow: 0 0 10px #00ff41, 0 0 20px #00ff41;
   }
 
+  .terminal-text {
+    font-family: 'Courier New', 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
   .zombie-gradient {
     background: linear-gradient(135deg, #0a0e0f 0%, #1a1f20 50%, #0a0e0f 100%);
   }

@@ -120,7 +120,8 @@ const Dashboard: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const newSocket = io(process.env.REACT_APP_API_URL || 'http://localhost:8000', {
+    const newSocket = io(process.env.REACT_APP_API_URL || window.location.origin, {
+      path: '/api/socket.io',
       transports: ['websocket', 'polling']
     });
 
@@ -245,7 +246,7 @@ const Dashboard: React.FC = () => {
   };
 
   const quickActions = [
-    { icon: '💊', label: 'MEDS', path: '/meds', bgColor: '#2563eb' }, // blue-600
+    { icon: '💊', label: 'MEDS', path: '/medications', bgColor: '#2563eb' }, // blue-600
     { icon: '🔔', label: 'REMINDERS', path: '/reminders', bgColor: '#9333ea' }, // purple-600
     { icon: '💰', label: 'FINANCE', path: '/finance', bgColor: '#16a34a' }, // green-600
     { icon: '✓', label: 'HABITS', path: '/habits', bgColor: '#ca8a04' }, // yellow-600

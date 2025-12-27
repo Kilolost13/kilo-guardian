@@ -259,7 +259,7 @@ const EnhancedTabletDashboard: React.FC = () => {
       const formData = new FormData();
       formData.append('image', blob, 'prescription.jpg');
 
-      const response = await fetch('http://localhost:8000/ai_brain/analyze/prescription', {
+      const response = await fetch('/api/ai_brain/analyze/prescription', {
         method: 'POST',
         body: formData
       });
@@ -289,8 +289,7 @@ const EnhancedTabletDashboard: React.FC = () => {
     { icon: '💊', label: 'MEDS', path: '/medications', color: 'bg-blue-500' },
     { icon: '🔔', label: 'REMINDERS', path: '/reminders', color: 'bg-green-500' },
     { icon: '💰', label: 'FINANCE', path: '/finance', color: 'bg-yellow-500' },
-    { icon: '✓', label: 'HABITS', path: '/habits', color: 'bg-purple-500' },
-    { icon: '📋', label: 'MEMORY', path: '/knowledge-graph', color: 'bg-red-500' }
+    { icon: '✓', label: 'HABITS', path: '/habits', color: 'bg-purple-500' }
   ];
 
   return (
@@ -567,28 +566,73 @@ const EnhancedTabletDashboard: React.FC = () => {
             <div className="flex-1 overflow-y-auto p-6 bg-gray-900">
               <div className="max-w-4xl mx-auto space-y-6">
                 <div className="bg-green-900/30 border-2 border-green-600 rounded-2xl p-6">
-                  <h3 className="text-3xl font-bold text-green-400 mb-4">✓ OCR Complete</h3>
+                  {prescriptionResult.success ? (
+                    <>
+                      <h3 className="text-3xl font-bold text-green-400 mb-4">✓ Prescription Analyzed</h3>
 
-                  {/* Extracted Text */}
-                  <div className="bg-black/50 rounded-xl p-6 mb-6">
-                    <h4 className="text-xl font-semibold text-white mb-3">Extracted Text:</h4>
-                    <pre className="text-lg text-gray-200 whitespace-pre-wrap font-mono">
-                      {prescriptionResult.text || prescriptionResult.ocr_text || 'No text extracted'}
-                    </pre>
-                  </div>
+                      {/* Extracted Text */}
+                      {prescriptionResult.ocr_text && (
+                        <div className="bg-black/50 rounded-xl p-6 mb-6">
+                          <h4 className="text-xl font-semibold text-white mb-3">📝 Extracted Text:</h4>
+                          <pre className="text-lg text-gray-200 whitespace-pre-wrap font-mono">
+                            {prescriptionResult.ocr_text}
+                          </pre>
+                        </div>
+                      )}
 
-                  {/* Analysis Results */}
-                  {prescriptionResult.analysis && (
-                    <div className="bg-blue-900/30 border border-blue-600 rounded-xl p-6">
-                      <h4 className="text-xl font-semibold text-blue-300 mb-3">AI Analysis:</h4>
-                      <div className="text-lg text-blue-200 space-y-2">
-                        {typeof prescriptionResult.analysis === 'string' ? (
-                          <p>{prescriptionResult.analysis}</p>
-                        ) : (
-                          <pre className="whitespace-pre-wrap">{JSON.stringify(prescriptionResult.analysis, null, 2)}</pre>
-                        )}
+                      {/* Parsed Medication Data */}
+                      {prescriptionResult.parsed_data && (
+                        <div className="bg-blue-900/30 border border-blue-600 rounded-xl p-6 mb-6">
+                          <h4 className="text-xl font-semibold text-blue-300 mb-3">💊 Medication Information:</h4>
+                          <div className="text-lg text-blue-200 space-y-3">
+                            {prescriptionResult.parsed_data.medication_name && (
+                              <div>
+                                <span className="font-bold">Name:</span> {prescriptionResult.parsed_data.medication_name}
+                              </div>
+                            )}
+                            {prescriptionResult.parsed_data.dosage && (
+                              <div>
+                                <span className="font-bold">Dosage:</span> {prescriptionResult.parsed_data.dosage}
+                              </div>
+                            )}
+                            {prescriptionResult.parsed_data.schedule && (
+                              <div>
+                                <span className="font-bold">Schedule:</span> {prescriptionResult.parsed_data.schedule}
+                              </div>
+                            )}
+                            {prescriptionResult.parsed_data.prescriber && (
+                              <div>
+                                <span className="font-bold">Prescriber:</span> {prescriptionResult.parsed_data.prescriber}
+                              </div>
+                            )}
+                            {prescriptionResult.parsed_data.instructions && (
+                              <div>
+                                <span className="font-bold">Instructions:</span> {prescriptionResult.parsed_data.instructions}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* AI Interpretation */}
+                      {prescriptionResult.ai_interpretation && (
+                        <div className="bg-purple-900/30 border border-purple-600 rounded-xl p-6">
+                          <h4 className="text-xl font-semibold text-purple-300 mb-3">🤖 AI Analysis:</h4>
+                          <div className="text-base text-purple-200">
+                            {prescriptionResult.ai_interpretation}
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <h3 className="text-3xl font-bold text-red-400 mb-4">⚠️ Analysis Failed</h3>
+                      <div className="bg-red-900/30 border border-red-600 rounded-xl p-6">
+                        <p className="text-lg text-red-200">
+                          {prescriptionResult.error || 'Failed to analyze prescription image. Please try again.'}
+                        </p>
                       </div>
-                    </div>
+                    </>
                   )}
 
                   {/* Action Buttons */}

@@ -9,6 +9,7 @@ module.exports = {
         'zombie-green': '#00ff41',
         'terminal-green': '#00cc33',
         'dark-bg': '#0a0e0f',
+        'zombie-dark': '#0a0e0f', // Alias for dark-bg
         'dark-card': '#1a1f20',
         'dark-border': '#2a3f3f',
         'neon-blue': '#00d9ff',

@@ -10,7 +10,7 @@ interface WebcamMonitorProps {
   onClick?: () => void; // click handler (used by Admin compact preview)
 }
 
-export const WebcamMonitor = ({ apiBaseUrl = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000', floating = true, widthClass = 'w-64', heightClass = 'h-48', className = '', compact = false, onClick }: WebcamMonitorProps): import('react').JSX.Element => {
+export const WebcamMonitor = ({ apiBaseUrl = process.env.REACT_APP_API_BASE_URL || '/api', floating = true, widthClass = 'w-64', heightClass = 'h-48', className = '', compact = false, onClick }: WebcamMonitorProps): import('react').JSX.Element => {
   const [isWatching, setIsWatching] = useState(false);
   const [lastDetection, setLastDetection] = useState<string>('');
   const [error, setError] = useState<string>('');
@@ -19,8 +19,8 @@ export const WebcamMonitor = ({ apiBaseUrl = process.env.REACT_APP_API_BASE_URL 
   const imgRef = useRef<HTMLImageElement>(null);
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Cam service runs on port 9007
-  const camServiceUrl = apiBaseUrl.replace(':8000', ':9007');
+  // Use API base URL (proxied through nginx to gateway, which routes to cam service)
+  const camServiceUrl = `${apiBaseUrl}/cam`;
 
   const checkCamService = React.useCallback(async () => {
     try {
@@ -29,10 +29,10 @@ export const WebcamMonitor = ({ apiBaseUrl = process.env.REACT_APP_API_BASE_URL 
         setIsWatching(true);
         setError('');
       } else {
-        setError('Cam service not responding');
+        setError('Cam service offline');
       }
     } catch (err) {
-      setError('Cannot connect to cam service');
+      setError('Server camera unavailable');
       console.error('Cam service check failed:', err);
     }
   }, [camServiceUrl]);
