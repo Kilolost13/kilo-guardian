@@ -819,6 +819,121 @@ def habit_feedback():
             feedback.append(f"You're doing well with '{name}', current streak: {stats['current_streak']}.")
     return {"feedback": feedback}
 
+
+@app.get("/stats/dashboard")
+async def get_dashboard_stats():
+    """
+    Aggregate stats from all services for the dashboard.
+    Returns counts and metrics for display in the main dashboard.
+    """
+    stats = {
+        "totalMemories": 0,
+        "activeHabits": 0,
+        "upcomingReminders": 0,
+        "monthlySpending": 0,
+        "insightsGenerated": 0
+    }
+
+    # Get memory count from local storage
+    try:
+        with get_session() as session:
+            from sqlmodel import select, func
+            from .models import Memory
+            stats["totalMemories"] = session.exec(select(func.count(Memory.id))).one()
+    except Exception:
+        pass
+
+    # Fetch from other services
+    async with httpx.AsyncClient(timeout=2.0) as client:
+        # Habits
+        try:
+            resp = await client.get("http://docker_habits_1:9003/")
+            if resp.status_code == 200:
+                habits = resp.json()
+                stats["activeHabits"] = len([h for h in habits if h.get("active", True)])
+        except Exception:
+            pass
+
+        # Reminders
+        try:
+            resp = await client.get("http://docker_reminder_1:9002/")
+            if resp.status_code == 200:
+                reminders = resp.json()
+                stats["upcomingReminders"] = len([r for r in reminders if not r.get("sent", False)])
+        except Exception:
+            pass
+
+        # Financial
+        try:
+            resp = await client.get("http://docker_financial_1:9005/summary")
+            if resp.status_code == 200:
+                summary = resp.json()
+                stats["monthlySpending"] = abs(summary.get("total_expenses", 0))
+        except Exception:
+            pass
+
+    # Insights generated is based on memories + conversations
+    stats["insightsGenerated"] = stats["totalMemories"]
+
+    return stats
+
+
+@app.get("/memory/visualization")
+async def get_memory_visualization():
+    """
+    Return memory visualization data for charts and graphs.
+    Includes timeline data and category breakdown.
+    """
+    viz_data = {
+        "timeline": [],
+        "categories": []
+    }
+
+    try:
+        with get_session() as session:
+            from sqlmodel import select
+            from .models import Memory
+            from collections import defaultdict
+
+            memories = session.exec(select(Memory)).all()
+
+            # Group by date for timeline
+            by_date = defaultdict(int)
+            by_category = defaultdict(int)
+
+            for memory in memories:
+                # Extract date from timestamp
+                try:
+                    date_str = memory.timestamp[:10] if hasattr(memory, 'timestamp') else datetime.datetime.utcnow().isoformat()[:10]
+                    by_date[date_str] += 1
+                except Exception:
+                    pass
+
+                # Category from metadata or default
+                category = "general"
+                if hasattr(memory, 'metadata') and memory.metadata:
+                    if isinstance(memory.metadata, dict):
+                        category = memory.metadata.get("category", "general")
+                by_category[category] += 1
+
+            # Convert to list format for frontend
+            viz_data["timeline"] = [
+                {"date": date, "count": count}
+                for date, count in sorted(by_date.items())
+            ][-30:]  # Last 30 days
+
+            viz_data["categories"] = [
+                {"name": cat, "count": count}
+                for cat, count in sorted(by_category.items(), key=lambda x: x[1], reverse=True)
+            ][:10]  # Top 10 categories
+
+    except Exception as e:
+        # Return empty data on error
+        logger.error(f"Failed to generate memory visualization: {e}")
+
+    return viz_data
+
+
 # --- Helpers ---
 def _parse_receipt(text: str) -> List[str]:
     lines = text.splitlines()

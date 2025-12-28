@@ -2,6 +2,8 @@ version: '3.8'
 
 services:
   gateway:
+    container_name: kilo_gateway
+    image: kilo/gateway:latest
     build: ../../services/gateway
     ports:
       - "8000:8000"
@@ -33,6 +35,8 @@ services:
       - default
 
   ai_brain:
+    container_name: kilo_ai_brain
+    image: kilo/ai_brain:latest
     build:
       context: ../..
       dockerfile: services/ai_brain/Dockerfile
@@ -61,6 +65,7 @@ services:
       - default
 
   ollama:
+    container_name: kilo_ollama
     image: ollama/ollama:latest
     # host port binding removed so a local Ollama process won't prevent the container starting
     environment:
@@ -87,6 +92,8 @@ services:
       - default
 
   cam:
+    container_name: kilo_cam
+    image: kilo/cam:latest
     build: ../../services/cam
     ports:
       - "9007:9007"
@@ -115,6 +122,8 @@ services:
       - default
 
   financial:
+    container_name: kilo_financial
+    image: kilo/financial:latest
     build:
       context: ../..
       dockerfile: services/financial/Dockerfile
@@ -136,6 +145,8 @@ services:
       - default
 
   habits:
+    container_name: kilo_habits
+    image: kilo/habits:latest
     build: ../../services/habits
     ports:
       - "9003:9003"
@@ -155,6 +166,8 @@ services:
       - default
 
   library_of_truth:
+    container_name: kilo_library
+    image: kilo/library_of_truth:latest
     build: ../../services/library_of_truth
     ports:
       - "9006:9006"
@@ -174,6 +187,8 @@ services:
       - default
 
   meds:
+    container_name: kilo_meds
+    image: kilo/meds:latest
     build: ../../services/meds
     ports:
       - "9001:9001"
@@ -193,6 +208,8 @@ services:
       - default
 
   reminder:
+    container_name: kilo_reminder
+    image: kilo/reminder:latest
     build:
       context: ../..
       dockerfile: services/reminder/Dockerfile
@@ -213,6 +230,8 @@ services:
       - default
 
   ml_engine:
+    container_name: kilo_ml_engine
+    image: kilo/ml_engine:latest
     build: ../../services/ml_engine
     ports:
       - "9008:9008"
@@ -233,6 +252,8 @@ services:
       - default
 
   frontend:
+    container_name: kilo_frontend
+    image: kilo/frontend:latest
     build:
       context: ../../frontend/kilo-react-frontend
       dockerfile: Dockerfile
@@ -251,6 +272,8 @@ services:
       - default
 
   voice:
+    container_name: kilo_voice
+    image: kilo/voice:latest
     build: ../../services/voice
     ports:
       - "9009:9009"
@@ -271,6 +294,8 @@ services:
       - default
 
   usb_transfer:
+    container_name: kilo_usb_transfer
+    image: kilo/usb_transfer:latest
     build:
       context: ../..
       dockerfile: services/usb_transfer/Dockerfile

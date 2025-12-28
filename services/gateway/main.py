@@ -238,7 +238,8 @@ async def _proxy(request: Request, service: str, path: str):
     headers["host"] = service_url.split("://")[1].split(":")[0]
 
     import sys
-    async with httpx.AsyncClient() as client:
+    # Increase timeout for LLM/RAG endpoints that may take longer to respond
+    async with httpx.AsyncClient(timeout=30.0) as client:
         try:
             req = client.build_request(
                 request.method,

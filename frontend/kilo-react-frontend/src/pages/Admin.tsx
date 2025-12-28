@@ -6,9 +6,11 @@ import { WebcamMonitor } from '../components/shared/WebcamMonitor';
 import { Modal } from '../components/shared/Modal';
 import { SystemStatus } from '../types';
 import api from '../services/api';
+import { useDeviceDetection } from '../utils/deviceDetection';
 
 const Admin: React.FC = () => {
   const navigate = useNavigate();
+  const { deviceInfo, features } = useDeviceDetection();
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
   const [memoryStats, setMemoryStats] = useState({ total: 0, public: 0, private: 0, confidential: 0 });
   const [loading, setLoading] = useState(true);
@@ -87,7 +89,12 @@ const Admin: React.FC = () => {
   return (
     <div className="min-h-screen zombie-gradient p-6">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-zombie-green terminal-glow">⚙️ ADMIN PANEL</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold text-zombie-green terminal-glow">⚙️ ADMIN PANEL</h1>
+          <span className="text-xs px-2 py-1 rounded-full bg-dark-border text-zombie-green border border-zombie-green">
+            {deviceInfo.type === 'tablet' ? '📱 Tablet Mode' : '💻 Full Access'}
+          </span>
+        </div>
         <Button onClick={() => navigate('/')} variant="secondary" size="sm">
           ← BACK
         </Button>
@@ -140,50 +147,57 @@ const Admin: React.FC = () => {
           </div>
 
           {/* Admin Actions */}
-          <div className="mb-6">
-            <h2 className="text-2xl font-bold text-zombie-green terminal-glow mb-4">ADMIN ACTIONS:</h2>
-            <div className="grid grid-cols-3 gap-4">
-              <Button onClick={createBackup} variant="primary" size="lg" className="h-24">
-                💾 CREATE BACKUP
-              </Button>
-              <Button onClick={() => {}} variant="secondary" size="lg" className="h-24">
-                🔄 RESTORE BACKUP
-              </Button>
+          {features.showAdvancedFeatures && (
+            <div className="mb-6">
+              <h2 className="text-2xl font-bold text-zombie-green terminal-glow mb-4">ADMIN ACTIONS:</h2>
+              <div className="grid grid-cols-3 gap-4">
+                <Button onClick={createBackup} variant="primary" size="lg" className="h-24">
+                  💾 CREATE BACKUP
+                </Button>
+                <Button onClick={() => {}} variant="secondary" size="lg" className="h-24">
+                  🔄 RESTORE BACKUP
+                </Button>
 
-              {/* Camera Card embedded in Admin Actions (inline feed) */}
-              <Card className="h-24 p-2 overflow-hidden">
-                <div className="w-full h-full flex items-center">
-                  <div className="w-full">
-                    <h3 className="text-sm text-zombie-green font-semibold mb-1">📷 Camera</h3>
-                    <div className="text-xs text-gray-400 mb-2">Live feed</div>
-                    <div className="w-full h-12 overflow-hidden rounded-md border border-dark-border relative cursor-pointer" onClick={openCameraModal}>
-                      <WebcamMonitor compact floating={false} widthClass={'w-full'} heightClass={'h-12'} className={'w-full h-12'} onClick={openCameraModal} />
-                      <div className="absolute top-1 right-1 z-50">
-                        <button onClick={(e) => { e.stopPropagation(); openCameraModal(); }} className="px-2 py-1 bg-dark-border text-zombie-green text-xs rounded hover:bg-zombie-green/10">Open</button>
+                {/* Camera Card embedded in Admin Actions (inline feed) - Server only */}
+                {features.showServerCamera && (
+                  <Card className="h-24 p-2 overflow-hidden">
+                    <div className="w-full h-full flex items-center">
+                      <div className="w-full">
+                        <h3 className="text-sm text-zombie-green font-semibold mb-1">📷 Server Camera</h3>
+                        <div className="text-xs text-gray-400 mb-2">Live feed</div>
+                        <div className="w-full h-12 overflow-hidden rounded-md border border-dark-border relative cursor-pointer" onClick={openCameraModal}>
+                          <WebcamMonitor compact floating={false} widthClass={'w-full'} heightClass={'h-12'} className={'w-full h-12'} onClick={openCameraModal} />
+                          <div className="absolute top-1 right-1 z-50">
+                            <button onClick={(e) => { e.stopPropagation(); openCameraModal(); }} className="px-2 py-1 bg-dark-border text-zombie-green text-xs rounded hover:bg-zombie-green/10">Open</button>
+                          </div>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                </div>
-              </Card>
+                  </Card>
+                )}
 
-              <Button onClick={() => {}} variant="danger" size="lg" className="h-24">
-                🗑️ CLEAR CACHE
-              </Button>
-              <Button onClick={() => {}} variant="secondary" size="lg" className="h-24">
-                📊 VIEW LOGS
-              </Button>
+                <Button onClick={() => {}} variant="danger" size="lg" className="h-24">
+                  🗑️ CLEAR CACHE
+                </Button>
+                <Button onClick={() => {}} variant="secondary" size="lg" className="h-24">
+                  📊 VIEW LOGS
+                </Button>
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Camera Modal (expanded preview) */}
-          <Modal open={cameraModalOpen} onClose={closeCameraModal} title="Camera Preview">
-            <div className="w-full">
-              <WebcamMonitor floating={false} widthClass={'w-full'} heightClass={'h-96'} className={'w-full h-96'} />
-            </div>
-          </Modal>
+          {/* Camera Modal (expanded preview) - Server only */}
+          {features.showServerCamera && (
+            <Modal open={cameraModalOpen} onClose={closeCameraModal} title="Server Camera Preview">
+              <div className="w-full">
+                <WebcamMonitor floating={false} widthClass={'w-full'} heightClass={'h-96'} className={'w-full h-96'} />
+              </div>
+            </Modal>
+          )}
 
-          {/* ML Prediction Testing */}
-          <div className="mb-6">
+          {/* ML Prediction Testing - Advanced feature only */}
+          {features.showAdvancedFeatures && (
+            <div className="mb-6">
             <h2 className="text-2xl font-bold text-zombie-green terminal-glow mb-4">🤖 ML PREDICTION TESTING:</h2>
             <Card>
               <div className="space-y-4">
@@ -248,6 +262,7 @@ const Admin: React.FC = () => {
               </div>
             </Card>
           </div>
+          )}
 
           {/* USB Data Transfer */}
           <div className="mb-6">

@@ -10,6 +10,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { io } from 'socket.io-client';
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition';
 import { RealTimeUpdate, CoachingInsight } from '../types';
+import { useDeviceDetection } from '../utils/deviceDetection';
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
@@ -40,6 +41,9 @@ const Dashboard: React.FC = () => {
     resetTranscript,
     browserSupportsSpeechRecognition
   } = useSpeechRecognition();
+
+  // Device detection
+  const { deviceInfo, features } = useDeviceDetection();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -155,7 +159,7 @@ const Dashboard: React.FC = () => {
 
   const fetchStats = async () => {
     try {
-      const response = await api.get('/stats/dashboard');
+      const response = await api.get('/ai_brain/stats/dashboard');
       setStats(response.data);
     } catch (error) {
       console.error('Failed to fetch stats:', error);
@@ -164,7 +168,7 @@ const Dashboard: React.FC = () => {
 
   const fetchMemoryVisualization = async () => {
     try {
-      const response = await api.get('/memory/visualization');
+      const response = await api.get('/ai_brain/memory/visualization');
       setMemoryViz(response.data);
     } catch (error) {
       console.error('Failed to fetch memory visualization:', error);
@@ -256,12 +260,20 @@ const Dashboard: React.FC = () => {
     <div className="min-h-screen zombie-gradient p-6">
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-bold text-zombie-green terminal-glow flex items-center gap-3">
-          🧠 KILO AI MEMORY
-        </h1>
-        <Button onClick={() => navigate('/admin')} variant="secondary" size="sm">
-          ⚙️ ADMIN
-        </Button>
+        <div className="flex items-center gap-3">
+          <h1 className="text-3xl font-bold text-zombie-green terminal-glow flex items-center gap-3">
+            🧠 KILO AI MEMORY
+          </h1>
+          {/* Device indicator */}
+          <span className="text-xs px-2 py-1 rounded-full bg-dark-border text-zombie-green border border-zombie-green">
+            {deviceInfo.type === 'tablet' ? '📱 Tablet' : '💻 Server'}
+          </span>
+        </div>
+        {features.showFullAdminPanel && (
+          <Button onClick={() => navigate('/admin')} variant="secondary" size="sm">
+            ⚙️ ADMIN
+          </Button>
+        )}
       </div>
 
       {/* Real-time updates banner */}
@@ -325,30 +337,48 @@ const Dashboard: React.FC = () => {
         </div>
 
         {/* Input */}
-        <div className="flex gap-3">
-          <input
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-            placeholder={showVoiceInput ? "Listening..." : "Type your message or use voice..."}
-            className="flex-1 px-6 py-4 text-lg rounded-xl border-2 border-dark-border bg-dark-bg text-zombie-green placeholder-zombie-green placeholder-opacity-50 focus:border-zombie-green focus:outline-none"
-            disabled={loading}
-          />
-          <Button
-            onClick={toggleVoiceInput}
-            disabled={loading}
-            size="lg"
-            variant={listening ? 'primary' : 'secondary'}
-          >
-            {listening ? '🎙️' : '🎤'}
-          </Button>
-          <Button onClick={() => setShowCamera(true)} variant="secondary" size="lg">
-            📷
-          </Button>
+        <div className="flex flex-col gap-2">
+          {/* Voice status indicator */}
+          {listening && (
+            <div className="flex items-center gap-2 text-sm text-zombie-green animate-pulse">
+              <div className="flex gap-1">
+                <div className="w-1 h-4 bg-zombie-green rounded animate-pulse" style={{ animationDelay: '0ms' }}></div>
+                <div className="w-1 h-6 bg-zombie-green rounded animate-pulse" style={{ animationDelay: '150ms' }}></div>
+                <div className="w-1 h-5 bg-zombie-green rounded animate-pulse" style={{ animationDelay: '300ms' }}></div>
+                <div className="w-1 h-7 bg-zombie-green rounded animate-pulse" style={{ animationDelay: '450ms' }}></div>
+                <div className="w-1 h-4 bg-zombie-green rounded animate-pulse" style={{ animationDelay: '600ms' }}></div>
+              </div>
+              <span>🎤 Listening...</span>
+            </div>
+          )}
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+              placeholder={showVoiceInput ? "Listening..." : "Type your message or use voice..."}
+              className="flex-1 px-6 py-4 text-lg rounded-xl border-2 border-dark-border bg-dark-bg text-zombie-green placeholder-zombie-green placeholder-opacity-50 focus:border-zombie-green focus:outline-none"
+              disabled={loading}
+            />
+            <Button
+              onClick={toggleVoiceInput}
+              disabled={loading}
+              size="lg"
+              variant={listening ? 'primary' : 'secondary'}
+              className={listening ? 'animate-pulse shadow-lg shadow-zombie-green/50' : ''}
+            >
+              {listening ? '🎙️' : '🎤'}
+            </Button>
+          {(features.showServerCamera || features.showTabletCamera) && (
+            <Button onClick={() => setShowCamera(true)} variant="secondary" size="lg">
+              📷
+            </Button>
+          )}
           <Button onClick={() => {}} variant="secondary" size="lg">
             📎
           </Button>
+          </div>
         </div>
       </Card>
 
