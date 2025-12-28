@@ -158,6 +158,7 @@ def _check_admin_auth(request: Request):
 
 
 @app.get("/")
+@app.get("/transactions")  # Frontend-compatible alias
 def list_transactions():
     with Session(engine) as session:
         txs = session.exec(select(Transaction)).all()
@@ -216,6 +217,7 @@ def get_spending_trends():
 
 
 @app.post("/")
+@app.post("/transaction")  # Frontend-compatible alias
 def add_transaction(t: Transaction, background_tasks: BackgroundTasks = None):
     # Ensure source field is set safely
     current_source = getattr(t, 'source', None)
@@ -254,6 +256,7 @@ def update_transaction(transaction_id: int, t: Transaction, background_tasks: Ba
 
 
 @app.delete("/{transaction_id}")
+@app.delete("/transactions/{transaction_id}")  # Frontend-compatible alias
 def delete_transaction(transaction_id: int):
     with Session(engine) as session:
         transaction = session.get(Transaction, transaction_id)
@@ -277,6 +280,7 @@ def get_budgets():
 
 
 @app.post("/budgets")
+@app.post("/budget")  # Frontend-compatible alias
 def create_budget(budget: Budget, background_tasks: BackgroundTasks = None):
     budget.created_at = datetime.datetime.utcnow().isoformat()
     with Session(engine) as session:
@@ -322,6 +326,7 @@ def get_goals():
 
 
 @app.post("/goals")
+@app.post("/goal")  # Frontend-compatible alias
 def create_goal(goal: Goal, background_tasks: BackgroundTasks = None):
     goal.created_at = datetime.datetime.utcnow().isoformat()
     with Session(engine) as session:

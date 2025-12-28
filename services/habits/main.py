@@ -82,9 +82,28 @@ def _require_admin(headers: dict = None) -> bool:
 def list_habits():
     with Session(engine) as session:
         habits = session.query(Habit).all()
+        result = []
         for h in habits:
-            h.completions = session.query(HabitCompletion).filter(HabitCompletion.habit_id == h.id).all()
-        return habits
+            # Get completions for this habit
+            completions = session.query(HabitCompletion).filter(HabitCompletion.habit_id == h.id).all()
+            # Convert to dict and add completions
+            habit_dict = {
+                "id": h.id,
+                "name": h.name,
+                "frequency": h.frequency,
+                "target_count": h.target_count,
+                "active": h.active,
+                "completions": [
+                    {
+                        "id": c.id,
+                        "habit_id": c.habit_id,
+                        "completion_date": c.completion_date,
+                        "count": c.count
+                    } for c in completions
+                ]
+            }
+            result.append(habit_dict)
+        return result
 
 @app.post("/")
 def add_habit(h: Habit, background_tasks: BackgroundTasks = None):
