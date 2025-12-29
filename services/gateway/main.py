@@ -199,7 +199,11 @@ async def admin_ai_brain_metrics(request: Request):
     header = request.headers.get('x-admin-token')
     # Allow either a valid stored admin token, or the static LIBRARY_ADMIN_KEY for bootstrap/admin operations
     LIBRARY_ADMIN_KEY = os.environ.get('LIBRARY_ADMIN_KEY')
-    if header == LIBRARY_ADMIN_KEY:
+    logger.info(f"admin metrics auth header: {repr(header)}, LIBRARY_ADMIN_KEY: {repr(LIBRARY_ADMIN_KEY)}")
+    # Allow explicit LIBRARY_ADMIN_KEY match or stored admin tokens
+    if header and LIBRARY_ADMIN_KEY and header.strip() == LIBRARY_ADMIN_KEY.strip():
+        valid = True
+    elif request.headers.get('authorization') and LIBRARY_ADMIN_KEY and LIBRARY_ADMIN_KEY in request.headers.get('authorization'):
         valid = True
     else:
         valid = _validate_header_token(header)
