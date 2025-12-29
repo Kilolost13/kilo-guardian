@@ -90,6 +90,22 @@ except Exception as e:
 STT_PROVIDER = os.environ.get("STT_PROVIDER", "none")
 TTS_PROVIDER = os.environ.get("TTS_PROVIDER", "none")
 
+# Compatibility: convert Pydantic models to dicts supporting v1 (.dict()) and v2 (.model_dump())
+def _to_dict(m):
+    """Return a serializable dict for a pydantic model or object."""
+    try:
+        # Pydantic v2
+        return m.model_dump()
+    except Exception:
+        try:
+            return m.dict()
+        except Exception:
+            try:
+                return dict(m)
+            except Exception:
+                return getattr(m, "__dict__", {})
+
+
 from contextlib import asynccontextmanager
 try:
     from .db import get_session
@@ -561,10 +577,10 @@ async def chat_voice(
 # --- Ingest endpoints and other APIs ---
 @app.post("/ingest/meds")
 def ingest_meds(med: MedData, background_tasks: BackgroundTasks):
-    user_state["meds"].append(med.model_dump())
+    user_state["meds"].append(_to_dict(med))
     # Proactively set a reminder
     reminder = Reminder(text=f"Take {med.name} as scheduled.", when=med.schedule)
-    user_state["reminders"].append(reminder.model_dump())
+    user_state["reminders"].append(_to_dict(reminder))
     background_tasks.add_task(_log_activity, f"Ingested med: {med.name}")
     # Persist a Memory for this med ingestion
     try:
@@ -573,7 +589,7 @@ def ingest_meds(med: MedData, background_tasks: BackgroundTasks):
             s = get_session()
             txt = f"med:{med.name} schedule:{med.schedule} dosage:{med.dosage}"
             emb = _embed_text(txt)
-            mem = Memory(source="meds", modality="text", text_blob=txt, metadata_json=json.dumps(med.model_dump()), embedding_json=json.dumps(emb))
+            mem = Memory(source="meds", modality="text", text_blob=txt, metadata_json=json.dumps(_to_dict(med)), embedding_json=json.dumps(emb))
             s.add(mem)
             s.commit()
             s.refresh(mem)
@@ -583,7 +599,7 @@ def ingest_meds(med: MedData, background_tasks: BackgroundTasks):
 
 @app.post("/ingest/finance")
 def ingest_finance(fin: FinanceData, background_tasks: BackgroundTasks):
-    user_state["finance"].append(fin.model_dump())
+    user_state["finance"].append(_to_dict(fin))
     background_tasks.add_task(_log_activity, f"Finance event: {fin.description}")
     # Persist a Memory for this finance event
     try:
@@ -592,7 +608,7 @@ def ingest_finance(fin: FinanceData, background_tasks: BackgroundTasks):
             s = get_session()
             txt = f"finance:{fin.description} amount:{fin.amount} date:{fin.date}"
             emb = _embed_text(txt)
-            mem = Memory(source="finance", modality="text", text_blob=txt, metadata_json=json.dumps(fin.model_dump()), embedding_json=json.dumps(emb))
+            mem = Memory(source="finance", modality="text", text_blob=txt, metadata_json=json.dumps(_to_dict(fin)), embedding_json=json.dumps(emb))
             s.add(mem)
             s.commit()
             s.refresh(mem)
@@ -630,7 +646,7 @@ def ingest_receipt(receipt: ReceiptData, background_tasks: BackgroundTasks):
 
 @app.post("/ingest/cam")
 def ingest_cam(obs: CamObservation, background_tasks: BackgroundTasks):
-    user_state["cam_observations"].append(obs.model_dump())
+    user_state["cam_observations"].append(_to_dict(obs))
     background_tasks.add_task(_log_activity, f"Cam observed: {obs.posture} at {obs.timestamp} match={obs.pose_match}")
     feedback = None
     if obs.pose_match is not None:
@@ -644,7 +660,7 @@ def ingest_cam(obs: CamObservation, background_tasks: BackgroundTasks):
             s = get_session()
             txt = f"posture:{obs.posture} match:{obs.pose_match}"
             emb = _embed_text(txt)
-            mem = Memory(source="cam", modality="text", text_blob=txt, metadata_json=json.dumps(obs.model_dump()), embedding_json=json.dumps(emb))
+            mem = Memory(source="cam", modality="text", text_blob=txt, metadata_json=json.dumps(_to_dict(obs)), embedding_json=json.dumps(emb))
             s.add(mem)
             s.commit()
             s.refresh(mem)
@@ -655,7 +671,7 @@ def ingest_cam(obs: CamObservation, background_tasks: BackgroundTasks):
 
 @app.post("/ingest/habit")
 def ingest_habit(habit: HabitData, background_tasks: BackgroundTasks):
-    user_state["habits"].append(habit.model_dump())
+    user_state["habits"].append(_to_dict(habit))
     background_tasks.add_task(_log_activity, f"New habit tracked: {habit.name}")
     # Persist a Memory for this habit
     try:
@@ -664,7 +680,7 @@ def ingest_habit(habit: HabitData, background_tasks: BackgroundTasks):
             s = get_session()
             txt = f"habit:{habit.name} frequency:{habit.frequency}"
             emb = _embed_text(txt)
-            mem = Memory(source="habits", modality="text", text_blob=txt, metadata_json=json.dumps(habit.model_dump()), embedding_json=json.dumps(emb))
+            mem = Memory(source="habits", modality="text", text_blob=txt, metadata_json=json.dumps(_to_dict(habit)), embedding_json=json.dumps(emb))
             s.add(mem)
             s.commit()
             s.refresh(mem)
@@ -682,7 +698,7 @@ def ingest_habit_completion(completion: HabitCompletionData, background_tasks: B
             s = get_session()
             txt = f"completed_habit:{completion.habit} date:{completion.completion_date} count:{completion.count}"
             emb = _embed_text(txt)
-            mem = Memory(source="habits", modality="text", text_blob=txt, metadata_json=json.dumps(completion.model_dump()), embedding_json=json.dumps(emb))
+            mem = Memory(source="habits", modality="text", text_blob=txt, metadata_json=json.dumps(_to_dict(completion)), embedding_json=json.dumps(emb))
             s.add(mem)
             s.commit()
             s.refresh(mem)
@@ -700,7 +716,7 @@ def ingest_budget(budget: BudgetData, background_tasks: BackgroundTasks):
             s = get_session()
             txt = f"budget:{budget.category} limit:${budget.monthly_limit}/month"
             emb = _embed_text(txt)
-            mem = Memory(source="finance", modality="text", text_blob=txt, metadata_json=json.dumps(budget.model_dump()), embedding_json=json.dumps(emb))
+            mem = Memory(source="finance", modality="text", text_blob=txt, metadata_json=json.dumps(_to_dict(budget)), embedding_json=json.dumps(emb))
             s.add(mem)
             s.commit()
             s.refresh(mem)
@@ -718,7 +734,7 @@ def ingest_goal(goal: GoalData, background_tasks: BackgroundTasks):
             s = get_session()
             txt = goal.message
             emb = _embed_text(txt)
-            mem = Memory(source="finance", modality="text", text_blob=txt, metadata_json=json.dumps(goal.model_dump()), embedding_json=json.dumps(emb))
+            mem = Memory(source="finance", modality="text", text_blob=txt, metadata_json=json.dumps(_to_dict(goal)), embedding_json=json.dumps(emb))
             s.add(mem)
             s.commit()
             s.refresh(mem)
