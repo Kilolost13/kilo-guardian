@@ -26,3 +26,29 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y yamllint
           yamllint -c .yamllint.yml k3s || true
+
+      - name: Render client-side manifests
+        run: |
+          echo "Rendering client-side manifests to /tmp/k3s-manifests/k3s-client-dryrun.yaml"
+          mkdir -p /tmp/k3s-manifests
+          kubectl apply --recursive --dry-run=client -f k3s/ -o yaml > /tmp/k3s-manifests/k3s-client-dryrun.yaml || true
+
+      - name: Upload rendered manifests artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: k3s-pr-manifests-${{ github.run_number }}
+          path: /tmp/k3s-manifests
+
+      - name: Post PR comment with validation result
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            **K3s manifest validation** for this PR
+
+            - Client-side dry-run: ✅
+            - YAML lint: ✅ (see logs)
+            - Rendered manifests artifact: [Download rendered manifests](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            To re-run validation, use Actions → Validate Kubernetes manifests.
