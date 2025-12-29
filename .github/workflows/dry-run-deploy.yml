@@ -40,14 +40,20 @@ jobs:
           echo "Running kubectl client-side dry-run on k3s/ manifests"
           kubectl apply --recursive --dry-run=client -f k3s/
 
+      - name: Render client-side manifests
+        run: |
+          echo "Rendering client-side manifests to /tmp/k3s-manifests/k3s-client-dryrun.yaml"
+          mkdir -p /tmp/k3s-manifests
+          kubectl apply --recursive --dry-run=client -f k3s/ -o yaml > /tmp/k3s-manifests/k3s-client-dryrun.yaml || true
+
       - name: Server-side dry-run (kubectl)
         run: |
           echo "Attempting server-side dry-run (may be unsupported on some clusters)"
-          set -o pipefail
-          if kubectl apply --recursive --dry-run=server -f k3s/ | true; then
-            echo "server-side dry-run completed (or not supported)."
+          mkdir -p /tmp/k3s-manifests
+          if kubectl apply --recursive --dry-run=server -f k3s/ -o yaml > /tmp/k3s-manifests/k3s-server-dryrun.yaml 2>/dev/null; then
+            echo "server-side dry-run completed and saved to /tmp/k3s-manifests/k3s-server-dryrun.yaml"
           else
-            echo "server-side dry-run failed or unsupported — skip if cluster doesn't support it." && exit 0
+            echo "server-side dry-run failed or unsupported — continuing"
           fi
         continue-on-error: true
 
@@ -57,9 +63,15 @@ jobs:
           echo "Checking Prometheus Helm chart templating"
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts || true
           helm repo update || true
-          helm template monitoring prometheus-community/kube-prometheus-stack -n monitoring -f k3s/prometheus-values.yaml --include-crds --skip-tests > /tmp/prometheus-render.yaml
+          helm template monitoring prometheus-community/kube-prometheus-stack -n monitoring -f k3s/prometheus-values.yaml --include-crds --skip-tests > /tmp/k3s-manifests/prometheus-render.yaml
           echo "Rendered Prometheus chart (first 200 lines):"
-          head -n 200 /tmp/prometheus-render.yaml || true
+          head -n 200 /tmp/k3s-manifests/prometheus-render.yaml || true
+
+      - name: Upload rendered manifests artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: k3s-rendered-manifests-${{ github.run_number }}
+          path: /tmp/k3s-manifests
 
       - name: Finish
         run: |
