@@ -47,3 +47,24 @@ jobs:
       - name: Print cluster objects (kilo-guardian)
         run: |
           kubectl -n kilo-guardian get deployments,services,pods -o wide || true
+
+      - name: Notify deploy result (Slack/Discord webhooks optional)
+        if: always()
+        run: |
+          set -e
+          STATUS=$([ "$GITHUB_JOB" = "deploy" ] && echo "succeded" || echo "completed")
+
+          # Slack notification (if SLACK_WEBHOOK secret provided)
+          if [ -n "${{ secrets.SLACK_WEBHOOK }}" ]; then
+            payload="{\"text\": \"K3s deploy: ${{ github.repository }}#${{ github.run_number }} ${STATUS} by ${{ github.actor }} (<${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}|details>)\"}"
+            curl -sS -X POST -H 'Content-type: application/json' --data "$payload" "${{ secrets.SLACK_WEBHOOK }}" || true
+          fi
+
+          # Discord notification (if DISCORD_WEBHOOK secret provided)
+          if [ -n "${{ secrets.DISCORD_WEBHOOK }}" ]; then
+            payload="{\"content\": \"K3s deploy: ${{ github.repository }}#${{ github.run_number }} ${STATUS} by ${{ github.actor }} - <${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}>\"}"
+            curl -sS -X POST -H 'Content-type: application/json' --data "$payload" "${{ secrets.DISCORD_WEBHOOK }}" || true
+          fi
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
