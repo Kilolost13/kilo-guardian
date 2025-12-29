@@ -50,12 +50,13 @@ def start_service(module_spec, port, extra_env=None):
     env = os.environ.copy()
     # Ensure child processes can import both top-level helpers (db.py) and the
     # `microservice` package. Add both microservice dir and its parent to PYTHONPATH.
-    micro_dir = os.getcwd()  # microservice dir
-    parent_dir = os.path.dirname(micro_dir)
+    micro_dir = os.path.abspath(os.getcwd())  # microservice dir
+    parent_dir = os.path.abspath(os.path.dirname(micro_dir))
     parts = [micro_dir, parent_dir]
     if env.get('PYTHONPATH'):
         parts.append(env.get('PYTHONPATH'))
-    env['PYTHONPATH'] = ':'.join(parts)
+    # Ensure platform-appropriate separator
+    env['PYTHONPATH'] = os.pathsep.join(parts)
     if extra_env:
         env.update(extra_env)
     cmd = [

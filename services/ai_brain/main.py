@@ -213,10 +213,22 @@ async def lifespan(app: FastAPI):
 
 from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 
-# Prometheus metrics
-REQUEST_COUNT = Counter('ai_brain_requests_total', 'Total HTTP requests', ['method', 'endpoint', 'status'])
-REQUEST_LATENCY = Histogram('ai_brain_request_latency_seconds', 'Request latency', ['method', 'endpoint'])
-IN_PROGRESS = Gauge('ai_brain_inprogress_requests', 'In-progress requests')
+# Prometheus metrics: create only if not already present (safe for repeated imports)
+if 'REQUEST_COUNT' not in globals():
+    REQUEST_COUNT = Counter('ai_brain_requests_total', 'Total HTTP requests', ['method', 'endpoint', 'status'])
+else:
+    # reuse existing
+    REQUEST_COUNT = globals()['REQUEST_COUNT']
+
+if 'REQUEST_LATENCY' not in globals():
+    REQUEST_LATENCY = Histogram('ai_brain_request_latency_seconds', 'Request latency', ['method', 'endpoint'])
+else:
+    REQUEST_LATENCY = globals()['REQUEST_LATENCY']
+
+if 'IN_PROGRESS' not in globals():
+    IN_PROGRESS = Gauge('ai_brain_inprogress_requests', 'In-progress requests')
+else:
+    IN_PROGRESS = globals()['IN_PROGRESS']
 
 app = FastAPI(title="AI Brain Service", lifespan=lifespan)
 

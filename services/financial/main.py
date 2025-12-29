@@ -11,7 +11,19 @@ import pytesseract
 import re
 import base64
 from contextlib import asynccontextmanager
-from db import get_engine
+# db helper: try absolute import first, then package-aware fallback
+try:
+    from db import get_engine
+except Exception:
+    try:
+        from microservice.db import get_engine  # fallback if running as package
+    except Exception:
+        import sys, os
+        repo_root = os.getcwd()
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        from db import get_engine
+
 from shared.models import Transaction, ReceiptItem
 # Financial models
 # Use shared models where appropriate to avoid duplicate definitions during test collection
