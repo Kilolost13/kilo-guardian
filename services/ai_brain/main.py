@@ -241,9 +241,30 @@ async def metrics_middleware(request, call_next):
         finally:
             IN_PROGRESS.dec()
 
-# Expose Prometheus metrics endpoint
+# Expose Prometheus metrics endpoint (restricted to admin access)
 @app.get('/metrics')
-async def metrics():
+async def metrics(request: Request):
+    """Return Prometheus metrics only if a valid admin token is provided.
+
+    Accepts either header `X-Admin-Token: <token>` or `Authorization: Bearer <token>`.
+    The token is compared against METRICS_TOKEN env var or LIBRARY_ADMIN_KEY as a fallback.
+    """
+    # Token sources
+    token = request.headers.get('x-admin-token') or request.headers.get('authorization')
+    if token and token.lower().startswith('bearer '):
+        token = token.split(' ', 1)[1]
+
+    METRICS_TOKEN = os.environ.get('METRICS_TOKEN') or os.environ.get('LIBRARY_ADMIN_KEY')
+
+    if not METRICS_TOKEN:
+        # If no token configured, restrict to localhost
+        client_host = request.client.host if request.client else None
+        if client_host not in ('127.0.0.1', '::1', 'localhost'):
+            raise HTTPException(status_code=403, detail='Metrics access restricted to localhost or admin token')
+    else:
+        if token != METRICS_TOKEN:
+            raise HTTPException(status_code=401, detail='Unauthorized')
+
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 # Mount orchestration routes if available

@@ -189,6 +189,29 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get('/admin/ai_brain/metrics')
+async def admin_ai_brain_metrics(request: Request):
+    """Proxy ai_brain metrics to admin users only.
+
+    Validates X-Admin-Token using the gateway's token store. Returns raw Prometheus metrics text.
+    """
+    header = request.headers.get('x-admin-token')
+    if not _validate_header_token(header):
+        # Allow creation of first token (handled elsewhere), otherwise reject
+        raise HTTPException(status_code=401, detail='Unauthorized')
+
+    service_url = SERVICE_URLS.get('ai_brain')
+    if not service_url:
+        raise HTTPException(status_code=404, detail='Service not found')
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        try:
+            resp = await client.get(f"{service_url.rstrip('/')}/metrics", headers={"X-Admin-Token": header})
+            return Response(content=resp.content, media_type=resp.headers.get('content-type','text/plain'), status_code=resp.status_code)
+        except httpx.RequestError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.get("/admin/status")
 async def admin_status():
     """Aggregate health status from all backend services"""
