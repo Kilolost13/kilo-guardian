@@ -8,6 +8,10 @@ from typing import Optional
 import secrets
 import hashlib
 import datetime
+import time
+import asyncio
+import logging
+logger = logging.getLogger(__name__)
 
 
 app = FastAPI(title="Kilos API Gateway")
@@ -237,42 +241,63 @@ async def _proxy(request: Request, service: str, path: str):
     # The Host header should be the service's host, not the gateway's
     headers["host"] = service_url.split("://")[1].split(":")[0]
 
-    import sys
-    # Increase timeout for LLM/RAG endpoints that may take longer to respond
+    # Use a slightly more robust request with timing and retries for slow endpoints
+    retries = 2
+    backoff = 0.5
     async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            req = client.build_request(
-                request.method,
-                url,
-                headers=headers,
-                params=request.query_params,
-                content=await request.body()
-            )
-            resp = await client.send(req, stream=True)
-            content_type = resp.headers.get("content-type", "application/json")
-            data = await resp.aread()
-
-            # Handle binary responses (images, PDFs, etc.)
-            if content_type.startswith("image/") or content_type == "application/pdf":
-                from fastapi.responses import Response as FastAPIResponse
-                return FastAPIResponse(content=data, media_type=content_type, status_code=resp.status_code)
-
-            # Handle JSON responses
-            import json
+        last_exc = None
+        for attempt in range(1, retries + 1):
+            start_ts = time.time()
             try:
-                parsed = json.loads(data)
-                return JSONResponse(content=parsed, status_code=resp.status_code)
-            except Exception as e:
-                # Try to decode as text
+                req = client.build_request(
+                    request.method,
+                    url,
+                    headers=headers,
+                    params=request.query_params,
+                    content=await request.body()
+                )
+                resp = await client.send(req, stream=True)
+                elapsed = time.time() - start_ts
+
+                # Log slow responses for ai_brain specifically
+                if service == 'ai_brain' and elapsed > 3.0:
+                    logger.warning(f"ai_brain slow response: {request.method} {path} took {elapsed:.2f}s (attempt {attempt})")
+
+                content_type = resp.headers.get("content-type", "application/json")
+                data = await resp.aread()
+
+                # Handle binary responses (images, PDFs, etc.)
+                if content_type.startswith("image/") or content_type == "application/pdf":
+                    from fastapi.responses import Response as FastAPIResponse
+                    logger.info(f"Proxy OK: {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
+                    return FastAPIResponse(content=data, media_type=content_type, status_code=resp.status_code)
+
+                # Handle JSON responses
+                import json
                 try:
-                    text_content = data.decode('utf-8')
-                    return JSONResponse(content={"raw": text_content}, status_code=resp.status_code)
-                except UnicodeDecodeError:
-                    # If it's not decodable, return as base64
-                    import base64
-                    return JSONResponse(content={"raw_base64": base64.b64encode(data).decode()}, status_code=resp.status_code)
-        except httpx.RequestError as e:
-            raise HTTPException(status_code=502, detail=f"Bad Gateway: {e}")
+                    parsed = json.loads(data)
+                    logger.info(f"Proxy OK: {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
+                    return JSONResponse(content=parsed, status_code=resp.status_code)
+                except Exception:
+                    try:
+                        text_content = data.decode('utf-8')
+                        logger.info(f"Proxy OK (text): {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
+                        return JSONResponse(content={"raw": text_content}, status_code=resp.status_code)
+                    except UnicodeDecodeError:
+                        import base64
+                        logger.info(f"Proxy OK (binary): {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
+                        return JSONResponse(content={"raw_base64": base64.b64encode(data).decode()}, status_code=resp.status_code)
+
+            except httpx.RequestError as e:
+                elapsed = time.time() - start_ts
+                logger.error(f"Proxy request error to {service} {url} (attempt {attempt}) after {elapsed:.2f}s: {e}")
+                last_exc = e
+                if attempt < retries:
+                    await client.aclose()
+                    await asyncio.sleep(backoff * attempt)
+                    continue
+                else:
+                    raise HTTPException(status_code=502, detail=f"Bad Gateway: {e}")
 
 
 @app.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])

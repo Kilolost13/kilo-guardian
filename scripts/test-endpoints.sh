@@ -66,7 +66,11 @@ test_endpoint() {
     body_response=$(echo "$response" | head -n-1)
 
     # Check status code
-    if [ "$http_code" = "$expected_status" ] || [ "$http_code" = "ERROR" -a "$expected_status" = "ANY" ]; then
+    if [ "$expected_status" = "ANY" ] && [ "$http_code" != "ERROR" ]; then
+        echo -e "${GREEN}✓${NC} [$service_name] $method $endpoint → $http_code"
+        PASSED_TESTS=$((PASSED_TESTS + 1))
+        return 0
+    elif [ "$http_code" = "$expected_status" ]; then
         echo -e "${GREEN}✓${NC} [$service_name] $method $endpoint → $http_code"
         PASSED_TESTS=$((PASSED_TESTS + 1))
         return 0
@@ -172,8 +176,8 @@ test_endpoint "AI Brain" "GET" "/ai_brain/status" "200"
 
 # Test missing dashboard endpoints that frontend expects
 echo -e "\n${YELLOW}Testing endpoints that Dashboard.tsx expects:${NC}"
-test_endpoint "AI Brain" "GET" "/memory/visualization" "ANY" "false"
-test_endpoint "Stats" "GET" "/stats/dashboard" "ANY" "false"
+test_endpoint "AI Brain" "GET" "/ai_brain/memory/visualization" "ANY" "false"
+test_endpoint "Stats" "GET" "/ai_brain/stats/dashboard" "ANY" "false"
 
 section_header "8. ML Engine Service (via Gateway)"
 test_endpoint "ML Engine" "GET" "/ml/health" "200"
@@ -225,8 +229,8 @@ test_endpoint "Frontend" "GET" "/habits" "200" "true"
 
 echo -e "\n${BLUE}Dashboard.tsx paths (may fail):${NC}"
 test_endpoint "Frontend" "GET" "/ml/insights/patterns" "200" "true"
-test_endpoint "Frontend" "GET" "/memory/visualization" "ANY" "false"
-test_endpoint "Frontend" "GET" "/stats/dashboard" "ANY" "false"
+test_endpoint "Frontend" "GET" "/ai_brain/memory/visualization" "ANY" "false"
+test_endpoint "Frontend" "GET" "/ai_brain/stats/dashboard" "ANY" "false"
 
 ###############################################################################
 # Results Summary

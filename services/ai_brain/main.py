@@ -486,6 +486,23 @@ async def chat_json(req: ChatRequest):
         answer = synthesize_answer(req.message, passages)
         return ChatResponse(response=answer, context=req.context)
 
+# Lightweight quick chat endpoint (no RAG) for low-latency responses
+@app.post("/chat/quick", response_model=ChatResponse)
+async def chat_quick(req: ChatRequest):
+    """
+    Quick chat endpoint that avoids the RAG pipeline for lower latency.
+    Uses library search and simple synthesis as a fast fallback.
+    """
+    try:
+        # Quick path: search library and synthesize a short answer
+        passages = await search_library(req.message)
+        answer = synthesize_answer(req.message, passages)
+        return ChatResponse(response=answer, context=req.context)
+    except Exception as e:
+        logging.error(f"chat_quick error: {e}")
+        # As a last resort echo the message back
+        return ChatResponse(response=f"I heard: {req.message}", context=req.context)
+
 # Form/multipart chat endpoint for voice or form-based input
 @app.post("/chat/voice")
 async def chat_voice(
