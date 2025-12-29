@@ -196,8 +196,14 @@ async def admin_ai_brain_metrics(request: Request):
     Validates X-Admin-Token using the gateway's token store. Returns raw Prometheus metrics text.
     """
     header = request.headers.get('x-admin-token')
-    if not _validate_header_token(header):
-        # Allow creation of first token (handled elsewhere), otherwise reject
+    # Allow either a valid stored admin token, or the static LIBRARY_ADMIN_KEY for bootstrap/admin operations
+    LIBRARY_ADMIN_KEY = os.environ.get('LIBRARY_ADMIN_KEY')
+    if header == LIBRARY_ADMIN_KEY:
+        valid = True
+    else:
+        valid = _validate_header_token(header)
+
+    if not valid:
         raise HTTPException(status_code=401, detail='Unauthorized')
 
     service_url = SERVICE_URLS.get('ai_brain')
