@@ -1,0 +1,28 @@
+name: Validate Kubernetes manifests
+
+on:
+  pull_request:
+    paths:
+      - 'k3s/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v3
+        with:
+          version: 'latest'
+
+      - name: Validate manifests (client dry-run)
+        run: |
+          echo "Running kubectl client-side dry-run over k3s/"
+          kubectl apply --recursive --dry-run=client -f k3s/
+
+      - name: Lint YAML (yamllint)
+        run: |
+          sudo apt-get update && sudo apt-get install -y yamllint
+          yamllint -c .yamllint.yml k3s || true

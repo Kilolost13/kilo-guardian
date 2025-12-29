@@ -26,16 +26,30 @@ Prometheus scraping:
 - Prometheus should scrape `gateway:8000/admin/ai_brain/metrics` using a bearer token file.
 
 Token creation & secret setup (recommended steps):
-1. Create a persistent admin token (if needed):
-   TOKEN=$(curl -s -X POST -H "X-Admin-Token: ${LIBRARY_ADMIN_KEY:-kilo-secure-admin-2024}" http://localhost:8000/admin/tokens | jq -r .token)
-   # If the above returns null (tokens exist), use the first token from listing:
-   if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then TOKEN=$(curl -s -H "X-Admin-Token: ${LIBRARY_ADMIN_KEY:-kilo-secure-admin-2024}" http://localhost:8000/admin/tokens | jq -r '.tokens[0].token'); fi
 
-2. Save the token into a file and create a Kubernetes secret in the monitoring namespace:
+1) Create a persistent admin token (if your gateway is running locally on the host or via a port-forward):
+
+   # Try to create a token (may return 401 if tokens already exist, in which case list and use an existing token)
+   TOKEN=$(curl -s -X POST -H "X-Admin-Token: ${LIBRARY_ADMIN_KEY:-kilo-secure-admin-2024}" http://localhost:8000/admin/tokens | jq -r .token)
+   if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+     TOKEN=$(curl -s -H "X-Admin-Token: ${LIBRARY_ADMIN_KEY:-kilo-secure-admin-2024}" http://localhost:8000/admin/tokens | jq -r '.tokens[0].token')
+   fi
+
+2) Save the token into a file and create a Kubernetes secret in the `monitoring` namespace (on the cluster host):
+
    echo -n "$TOKEN" > prometheus-token.txt
    kubectl -n monitoring create secret generic gateway-admin-token --from-file=token=prometheus-token.txt
 
-3. Use `k3s/prometheus-values.yaml` or ServiceMonitor to configure scraping and mount the token file into Prometheus.
+3) For GitHub Actions: base64-encode your kubeconfig and create the `KUBECONFIG_BASE64` repository secret (see below). The `deploy-k3s` workflow will decode it and run `k3s/deploy.sh`.
+
+  # example (on the Kubernetes host):
+  cat /etc/rancher/k3s/k3s.yaml | sed "s/127.0.0.1/<node-ip>/" | base64 -w0 | pbcopy
+
+  # then add as GitHub repo secret: KUBECONFIG_BASE64
+
+Notes when using GitHub Actions:
+- The `deploy-k3s` workflow will decode `KUBECONFIG_BASE64` into $HOME/.kube/config and run `./k3s/deploy.sh`.
+- For air-gapped clusters, ensure images are preloaded into the cluster nodes and set `SKIP_PROMETHEUS=true` if you don't have internet access for Helm charts.
 
 
 Rolling upgrades and resilience:
