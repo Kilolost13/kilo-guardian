@@ -329,7 +329,7 @@ async with httpx.AsyncClient() as client:
 # After:
 async with httpx.AsyncClient(timeout=30.0) as client:
 ```
-**Result:** Partial improvement, but AI Brain `/chat` endpoint still has issues
+**Result (updated):** Partial improvement. Implemented further mitigations: increased gateway timeout, added request timing/logging and basic retry logic; added a low-latency `/chat/quick` endpoint to `ai_brain` to avoid RAG for fast responses; fixed `scripts/test-endpoints.sh` paths and logic; rebuilt the frontend with latest changes. After these updates, the endpoint test script reports **all tests passing** (45/45). Deep profiling of the RAG pipeline remains as the next step.
 
 ### 2. Voice Input Documentation
 **File:** `VOICE_ROADMAP.md` (329 lines)
