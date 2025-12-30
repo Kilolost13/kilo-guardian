@@ -33,7 +33,7 @@ class Budget(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     category: str
     monthly_limit: float
-    created_at: str
+    created_at: Optional[str] = None  # Auto-generated if not provided
 
 
 class Goal(SQLModel, table=True):
@@ -42,7 +42,7 @@ class Goal(SQLModel, table=True):
     target_amount: float
     current_amount: float = 0.0
     deadline: Optional[str] = None
-    created_at: str
+    created_at: Optional[str] = None  # Auto-generated if not provided
     completed: bool = False
 
 

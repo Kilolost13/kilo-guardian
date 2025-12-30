@@ -341,3 +341,37 @@ async def proxy_all(request: Request, service: str, path: str):
 @app.api_route("/{service}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_root(request: Request, service: str):
     return await _proxy(request, service, "")
+
+# Socket.IO support for real-time updates
+import socketio
+
+# Create Socket.IO server
+sio = socketio.AsyncServer(
+    async_mode='asgi',
+    cors_allowed_origins='*',
+    logger=False,
+    engineio_logger=False
+)
+
+# Wrap with ASGI app
+socket_app = socketio.ASGIApp(
+    socketio_server=sio,
+    socketio_path='socket.io'
+)
+
+# Mount Socket.IO app
+app.mount('/socket.io', socket_app)
+
+@sio.event
+async def connect(sid, environ):
+    logger.info(f"Socket.IO client connected: {sid}")
+    await sio.emit('connected', {'status': 'ok'}, room=sid)
+
+@sio.event
+async def disconnect(sid):
+    logger.info(f"Socket.IO client disconnected: {sid}")
+
+@sio.event
+async def ping(sid, data):
+    """Handle ping from client"""
+    await sio.emit('pong', {'timestamp': time.time()}, room=sid)

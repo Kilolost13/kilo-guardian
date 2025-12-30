@@ -11,6 +11,8 @@ import numpy as np
 import cv2
 
 # Med model definition
+from datetime import datetime
+
 class Med(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     name: str
@@ -19,6 +21,8 @@ class Med(SQLModel, table=True):
     quantity: int = 0
     prescriber: str = ""
     instructions: str = ""
+    last_taken: Optional[str] = None  # ISO format datetime string
+    taken_count: int = 0  # Track how many times taken
 
 db_url = "sqlite:////data/meds.db"
 engine = create_engine(db_url, echo=False)
@@ -204,6 +208,30 @@ def delete_med(med_id: int):
         session.delete(med)
         session.commit()
     return {"status": "deleted"}
+
+@app.post("/{med_id}/take")
+def mark_med_taken(med_id: int):
+    """Mark a medication as taken right now"""
+    with Session(engine) as session:
+        med = session.get(Med, med_id)
+        if not med:
+            raise HTTPException(status_code=404, detail="Medication not found")
+
+        # Update last taken time and increment counter
+        med.last_taken = datetime.utcnow().isoformat()
+        med.taken_count = (med.taken_count or 0) + 1
+
+        session.add(med)
+        session.commit()
+        session.refresh(med)
+
+    return {
+        "status": "taken",
+        "med_id": med.id,
+        "med_name": med.name,
+        "last_taken": med.last_taken,
+        "taken_count": med.taken_count
+    }
 
 async def _send_to_ai_brain(med: Med):
     async with httpx.AsyncClient() as client:
