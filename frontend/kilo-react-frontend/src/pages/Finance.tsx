@@ -449,6 +449,13 @@ const Finance: React.FC = () => {
                 // Log all values for debugging
                 // eslint-disable-next-line no-console
                 console.log(`[BUDGET DEBUG] idx=${idx} id=${budget.id} category=${budget.category} spent=${spent} monthly_limit=${monthly_limit} percentage=${percentage}`);
+                let percentageDisplay;
+                if (Number.isFinite(percentage) && typeof percentage === 'number') {
+                  percentageDisplay = `${percentage.toFixed(0)}%`;
+                } else {
+                  console.error('[FINANCE] Invalid percentage for budget:', percentage);
+                  percentageDisplay = '0%';
+                }
                 return (
                   <Card key={budget.id || Math.random()} className="py-2 px-3">
                     <div className="space-y-2">
@@ -464,14 +471,7 @@ const Finance: React.FC = () => {
                             Number.isFinite(percentage) && percentage >= 100 ? 'text-red-400' :
                             Number.isFinite(percentage) && percentage >= 80 ? 'text-yellow-400' : 'text-green-400'
                           }`}>
-                            (() => {
-                              if (Number.isFinite(percentage) && typeof percentage === 'number') {
-                                return `${percentage.toFixed(0)}%`;
-                              } else {
-                                console.error('[FINANCE] Invalid percentage for budget:', percentage);
-                                return '0%';
-                              }
-                            })()
+                            {percentageDisplay}
                           </span>
                           <button
                             onClick={() => handleDeleteBudget(budget.id)}
@@ -601,10 +601,18 @@ const Finance: React.FC = () => {
             <div className="space-y-2 mb-2">
               {goals.map((goal) => {
                 const safeCurrent = Number.isFinite(goal.current_amount) ? goal.current_amount : 0;
+                const safeCurrent = Number.isFinite(goal.current_amount) ? goal.current_amount : 0;
                 const safeTarget = Number.isFinite(goal.target_amount) ? goal.target_amount : 0;
                 const progress = calculateGoalProgress(safeCurrent, safeTarget);
                 // eslint-disable-next-line no-console
                 console.log(`[GOAL DEBUG] id=${goal.id} name=${goal.name} current_amount=${safeCurrent} target_amount=${safeTarget} progress=${progress}`);
+                let progressDisplay;
+                if (Number.isFinite(progress) && typeof progress === 'number') {
+                  progressDisplay = `${progress.toFixed(0)}%`;
+                } else {
+                  console.error('[FINANCE] Invalid progress for goal:', progress);
+                  progressDisplay = '0%';
+                }
                 const monthlyRate = 100; // Mock monthly savings rate
                 return (
                   <Card key={goal.id} className="py-2 px-3">
@@ -618,14 +626,7 @@ const Finance: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-bold text-blue-400">
-                            (() => {
-                              if (Number.isFinite(progress) && typeof progress === 'number') {
-                                return `${progress.toFixed(0)}%`;
-                              } else {
-                                console.error('[FINANCE] Invalid progress for goal:', progress);
-                                return '0%';
-                              }
-                            })()
+                            {progressDisplay}
                           </span>
                           <button
                             onClick={() => handleDeleteGoal(goal.id)}
@@ -637,7 +638,6 @@ const Finance: React.FC = () => {
                       </div>
                       <div className="w-full bg-zombie-dark rounded-full h-2">
                         <div
-                          className="h-2 rounded-full bg-blue-500"
                           style={{ width: `${progress}%` }}
                         ></div>
                       </div>
