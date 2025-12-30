@@ -466,7 +466,7 @@ const Finance: React.FC = () => {
                           }`}>
                             (Number.isFinite(percentage) && typeof percentage === 'number')
                               ? percentage.toFixed(0)
-                              : (console.error('[FINANCE] Invalid percentage for budget:', percentage), '0')
+                              : (() => { console.error('[FINANCE] Invalid percentage for budget:', percentage); return '0'; })()
                             }%
                           </span>
                           <button
@@ -616,7 +616,7 @@ const Finance: React.FC = () => {
                           <span className="text-sm font-bold text-blue-400">
                             {(Number.isFinite(progress) && typeof progress === 'number')
                               ? progress.toFixed(0)
-                              : (console.error('[FINANCE] Invalid progress for goal:', progress), '0')
+                              : (() => { console.error('[FINANCE] Invalid progress for goal:', progress); return '0'; })()
                             }%
                           </span>
                           <button
