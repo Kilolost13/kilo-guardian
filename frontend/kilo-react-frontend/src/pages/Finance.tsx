@@ -601,7 +601,6 @@ const Finance: React.FC = () => {
             <div className="space-y-2 mb-2">
               {goals.map((goal) => {
                 const safeCurrent = Number.isFinite(goal.current_amount) ? goal.current_amount : 0;
-                const safeCurrent = Number.isFinite(goal.current_amount) ? goal.current_amount : 0;
                 const safeTarget = Number.isFinite(goal.target_amount) ? goal.target_amount : 0;
                 const progress = calculateGoalProgress(safeCurrent, safeTarget);
                 // eslint-disable-next-line no-console
