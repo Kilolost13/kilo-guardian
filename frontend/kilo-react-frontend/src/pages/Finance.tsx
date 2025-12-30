@@ -464,9 +464,10 @@ const Finance: React.FC = () => {
                             Number.isFinite(percentage) && percentage >= 100 ? 'text-red-400' :
                             Number.isFinite(percentage) && percentage >= 80 ? 'text-yellow-400' : 'text-green-400'
                           }`}>
-                            {Number.isFinite(percentage)
+                            (Number.isFinite(percentage) && typeof percentage === 'number')
                               ? percentage.toFixed(0)
-                              : '0'}%
+                              : (console.error('[FINANCE] Invalid percentage for budget:', percentage), '0')
+                            }%
                           </span>
                           <button
                             onClick={() => handleDeleteBudget(budget.id)}
@@ -613,7 +614,10 @@ const Finance: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-bold text-blue-400">
-                            {Number.isFinite(progress) ? progress.toFixed(0) : '0'}%
+                            {(Number.isFinite(progress) && typeof progress === 'number')
+                              ? progress.toFixed(0)
+                              : (console.error('[FINANCE] Invalid progress for goal:', progress), '0')
+                            }%
                           </span>
                           <button
                             onClick={() => handleDeleteGoal(goal.id)}
