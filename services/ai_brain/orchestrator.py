@@ -13,7 +13,7 @@ def _get_model(name: str):
 
 from pydantic import BaseModel
 from typing import Optional, List
-import requests
+import httpx
 import os
 import json
 from sqlmodel import select
@@ -53,7 +53,7 @@ class UserSettingsDTO(BaseModel):
     opt_out_habits: Optional[bool] = None
 
 # Utility: call reminder service to create a reminder
-def create_reminder(text: str, when_dt: datetime):
+async def create_reminder(text: str, when_dt: datetime):
     payload = {"text": text, "when": when_dt.isoformat()}
     try:
         # include callback URL and hint for the reminder service
@@ -61,9 +61,10 @@ def create_reminder(text: str, when_dt: datetime):
         headers = {}
         if cb:
             payload['_callback'] = cb.rstrip('/') + '/reminder/callback'
-        r = requests.post(f"{REMINDER_URL}/", json=payload, headers=headers, timeout=5)
-        r.raise_for_status()
-        return r.json().get("id") or r.json().get("id")
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            r = await client.post(f"{REMINDER_URL}/", json=payload, headers=headers)
+            r.raise_for_status()
+            return r.json().get("id") or r.json().get("id")
     except Exception as e:
         print("Failed to create reminder:", e)
         return None
@@ -136,7 +137,7 @@ except Exception as e:
     print(f"init_db failed: {e}")
 
 @router.post("/reminder/sedentary")
-def create_sedentary(s: SedentaryCreate):
+async def create_sedentary(s: SedentaryCreate):
     # Create sedentary state and schedule reminders at +1h, +2h, +3h
     with get_session() as session:
         # check user opt-out for camera tracking
@@ -155,7 +156,7 @@ def create_sedentary(s: SedentaryCreate):
         reminder_ids = []
         for hrs in (1,2,3):
             when = now + timedelta(hours=hrs)
-            rid = create_reminder(f"Sedentary reminder for {s.user_id}: been sitting for {hrs} hour(s)", when)
+            rid = await create_reminder(f"Sedentary reminder for {s.user_id}: been sitting for {hrs} hour(s)", when)
             if rid:
                 reminder_ids.append(rid)
         # store reminder ids as JSON string (reminder service may be unavailable in tests)
@@ -165,7 +166,7 @@ def create_sedentary(s: SedentaryCreate):
         return {"status":"ok","state_id": state.id, "reminder_ids": reminder_ids}
 
 @router.post("/ingest/cam")
-def ingest_cam(report: CamReportDTO):
+async def ingest_cam(report: CamReportDTO):
     # Save cam report and update sedentary state(s)
     with get_session() as session:
         # check opt-out
@@ -229,15 +230,16 @@ def ingest_cam(report: CamReportDTO):
                     rids = []
                 if rids:
                     try:
-                        r = requests.get(f"{REMINDER_URL}/")
-                        reminders = r.json()
-                        # map id->sent
-                        sent_map = {str(rem.get('id')): rem.get('sent') for rem in reminders}
-                        for rid in rids:
-                            rid_s = str(rid)
-                            if rid_s in sent_map and sent_map[rid_s]:
-                                # placeholder for future logic
-                                pass
+                        async with httpx.AsyncClient(timeout=5.0) as client:
+                            r = await client.get(f"{REMINDER_URL}/")
+                            reminders = r.json()
+                            # map id->sent
+                            sent_map = {str(rem.get('id')): rem.get('sent') for rem in reminders}
+                            for rid in rids:
+                                rid_s = str(rid)
+                                if rid_s in sent_map and sent_map[rid_s]:
+                                    # placeholder for future logic
+                                    pass
                     except Exception:
                         pass
             except Exception:
@@ -249,7 +251,7 @@ def ingest_cam(report: CamReportDTO):
             return {"status":"ok","msg":"sitting noted", "feedback": fb}
 
 @router.post("/meds/upload")
-def meds_upload(payload: MedUploadDTO):
+async def meds_upload(payload: MedUploadDTO):
     with get_session() as session:
         # very simple schedule parser: find times like HH:MM
         times = []
@@ -271,7 +273,7 @@ def meds_upload(payload: MedUploadDTO):
             when = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
             if when < now:
                 when = when + timedelta(days=1)
-            rid = create_reminder(f"Take {med.name} ({med.dosage or ''})", when)
+            rid = await create_reminder(f"Take {med.name} ({med.dosage or ''})", when)
             if rid:
                 reminder_ids.append(rid)
         return {"status":"ok","med_id": med.med_id, "reminders": reminder_ids}
@@ -304,7 +306,7 @@ def get_settings(user_id: str):
         return {"user_id": user_id, "opt_out_camera": s.opt_out_camera, "opt_out_habits": s.opt_out_habits}
 
 @router.post("/events")
-def log_event(evt: dict):
+async def log_event(evt: dict):
     # accept generic habit events
     with get_session() as session:
         ts = evt.get('timestamp') or datetime.utcnow()
@@ -377,8 +379,7 @@ def log_event(evt: dict):
                 if not (us and us.opt_out_habits):
                     # create a gentle check-in reminder
                     when = datetime.utcnow() + timedelta(minutes=1)
-                    create_reminder(f"We noticed a change in your {etype} pattern. Are you okay?", when)
-        return {"status":"ok"}
+                    await create_reminder(f"We noticed a change in your {etype} pattern. Are you okay?", when)
         return {"status":"ok"}
 
 @router.get("/user/{user_id}/habits")
