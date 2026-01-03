@@ -17,15 +17,10 @@ def test_opt_out_camera():
     assert r2.status_code == 200
     assert r2.json().get('status') == 'opted_out'
 
-@patch('ai_brain.orchestrator.requests.post')
-def test_anomaly_triggers_reminder(mock_post):
+@patch('ai_brain.orchestrator.create_reminder')
+def test_anomaly_triggers_reminder(mock_create_reminder):
     # make stub for reminder creation
-    class DummyResp:
-        def raise_for_status(self):
-            return None
-        def json(self):
-            return {"id": 999}
-    mock_post.return_value = DummyResp()
+    mock_create_reminder.return_value = 999
     # ensure settings allow habits
     client.post("/user/user2/settings", json={"opt_out_habits": False})
     # post several events to build profile
@@ -35,4 +30,4 @@ def test_anomaly_triggers_reminder(mock_post):
     # anomalous event far outside mean
     client.post("/events", json={"user_id":"user2","event_type":"wake_time","timestamp":"2025-12-12T23:00:00"})
     # ensure reminder creation was attempted
-    assert mock_post.called
+    assert mock_create_reminder.called

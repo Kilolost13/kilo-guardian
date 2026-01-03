@@ -14,6 +14,8 @@ APScheduler
 networkx
 # Additional CI/test deps added by automation
 prometheus_client
+python-socketio
+bcrypt
 numpy
 opencv-python-headless
 cryptography

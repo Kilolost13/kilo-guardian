@@ -39,6 +39,9 @@ interface FinancialGoal {
 }
 
 const Finance: React.FC = () => {
+    // Debug log: print all budgets before rendering
+    // eslint-disable-next-line no-console
+    console.log('[FINANCE DEBUG] Raw budgets array:', budgets);
   const navigate = useNavigate();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
@@ -429,42 +432,29 @@ const Finance: React.FC = () => {
           ) : (
             <div className="space-y-2 mb-2">
               {(Array.isArray(budgets) ? budgets.filter(b => b && typeof b === 'object') : []).map((budget, idx) => {
-                // Extra defensive: handle malformed/undefined budget objects
+                // Use normalized ratio (0-1) for budget progress, then display as percent
                 let spent = 0;
                 let monthly_limit = 0;
-                let percentage = 0;
+                let ratio = 0;
                 if (budget && typeof budget === 'object') {
                   spent = Number(budget.spent);
                   monthly_limit = Number(budget.monthly_limit);
                   if (!Number.isFinite(spent)) spent = 0;
                   if (!Number.isFinite(monthly_limit)) monthly_limit = 0;
-                  if ('percentage' in budget && Number.isFinite(budget.percentage)) {
-                    percentage = budget.percentage;
-                  } else if (monthly_limit > 0) {
-                    percentage = (spent / monthly_limit) * 100;
+                  if (monthly_limit > 0) {
+                    ratio = spent / monthly_limit;
                   } else {
-                    percentage = 0;
+                    ratio = 0;
                   }
+                  if (!Number.isFinite(ratio) || ratio < 0) ratio = 0;
+                  if (ratio > 1) ratio = 1;
                 } else {
                   // If budget is not an object, log and skip rendering
                   console.error('[FINANCE] Malformed budget object at idx', idx, budget);
                   return null;
                 }
-                // Log all values for debugging
-                // eslint-disable-next-line no-console
-                console.log(`[BUDGET DEBUG] idx=${idx} id=${budget.id} category=${budget.category} spent=${spent} monthly_limit=${monthly_limit} percentage=${percentage}`);
-                let percentageDisplay;
-                if (Number.isFinite(percentage)) {
-                  try {
-                    percentageDisplay = `${Number(percentage).toFixed(0)}%`;
-                  } catch (e) {
-                    console.error('[FINANCE] Error in toFixed for percentage:', percentage, e);
-                    percentageDisplay = '0%';
-                  }
-                } else {
-                  console.error('[FINANCE] Invalid percentage for budget:', percentage);
-                  percentageDisplay = '0%';
-                }
+                // (Debug log removed from JSX for build compatibility)
+                let percentageDisplay = `${(ratio * 100).toFixed(0)}%`;
                 return (
                   <Card key={budget.id || Math.random()} className="py-2 px-3">
                     <div className="space-y-2">
