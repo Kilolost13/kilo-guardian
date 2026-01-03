@@ -82,10 +82,20 @@ def _require_admin(headers: dict = None) -> bool:
 def list_habits():
     with Session(engine) as session:
         habits = session.query(Habit).all()
+        # Fetch all completions in a single query to avoid N+1 problem
+        all_completions = session.query(HabitCompletion).all()
+        
+        # Group completions by habit_id for efficient lookup
+        completions_by_habit = {}
+        for c in all_completions:
+            if c.habit_id not in completions_by_habit:
+                completions_by_habit[c.habit_id] = []
+            completions_by_habit[c.habit_id].append(c)
+        
         result = []
         for h in habits:
-            # Get completions for this habit
-            completions = session.query(HabitCompletion).filter(HabitCompletion.habit_id == h.id).all()
+            # Get completions from pre-fetched dict
+            completions = completions_by_habit.get(h.id, [])
             # Convert to dict and add completions
             habit_dict = {
                 "id": h.id,
@@ -140,10 +150,8 @@ def delete_habit(habit_id: int):
         habit = session.get(Habit, habit_id)
         if not habit:
             raise HTTPException(status_code=404, detail="Habit not found")
-        # Delete associated completions
-        completions = session.query(HabitCompletion).filter(HabitCompletion.habit_id == habit_id).all()
-        for c in completions:
-            session.delete(c)
+        # Delete associated completions using bulk delete (more efficient)
+        session.query(HabitCompletion).filter(HabitCompletion.habit_id == habit_id).delete()
         session.delete(habit)
         session.commit()
     return {"status": "deleted"}

@@ -9,7 +9,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 import threading
-import requests
+import httpx
 
 # Reminder models - import shared definitions to avoid duplicate table registration
 from shared.models import Reminder, ReminderPreset
@@ -170,6 +170,9 @@ def status():
 _scheduler = BackgroundScheduler()
 _scheduler_lock = threading.Lock()
 
+# Shared httpx client for connection pooling (more efficient than requests)
+_http_client = httpx.Client(timeout=5.0)
+
 
 def _send_reminder(reminder_id: int):
     with Session(engine) as session:
@@ -183,7 +186,7 @@ def _send_reminder(reminder_id: int):
             # Only attempt external notification if network egress is explicitly allowed.
             if notif_url and allow_network():
                 try:
-                    r = requests.post(notif_url, json=payload, headers=headers, timeout=5)
+                    r = _http_client.post(notif_url, json=payload, headers=headers)
                     if r.status_code < 400:
                         sent_ok = True
                 except Exception as e:
@@ -224,7 +227,7 @@ def _send_reminder(reminder_id: int):
                     # retry a few times
                     for attempt in range(3):
                         try:
-                            r = requests.post(url, json=body, headers=headers, timeout=5)
+                            r = _http_client.post(url, json=body, headers=headers)
                             if r.status_code < 400:
                                 break
                         except Exception as e:
@@ -253,7 +256,7 @@ def _send_reminder(reminder_id: int):
                         # try to find existing habit by name
                         if allow_network():
                             try:
-                                h_list = requests.get(HABITS_URL + '/').json()
+                                h_list = _http_client.get(HABITS_URL + '/').json()
                                 for h in h_list:
                                     if h.get('name') and h.get('name').lower() in reminder.text.lower():
                                         habit_id = h.get('id')
@@ -264,7 +267,7 @@ def _send_reminder(reminder_id: int):
                         h_payload = {'name': reminder.text[:64], 'frequency': reminder.recurrence or 'once'}
                         if allow_network():
                             try:
-                                r = requests.post(HABITS_URL + '/', json=h_payload, timeout=3)
+                                r = _http_client.post(HABITS_URL + '/', json=h_payload)
                                 if r.status_code < 400:
                                     habit_id = r.json().get('id')
                             except Exception:
@@ -272,7 +275,7 @@ def _send_reminder(reminder_id: int):
                     if habit_id:
                         try:
                             if allow_network():
-                                requests.post(f"{HABITS_URL}/complete/{habit_id}", timeout=3)
+                                _http_client.post(f"{HABITS_URL}/complete/{habit_id}")
                         except Exception:
                             pass
                 except Exception:
@@ -288,7 +291,7 @@ def _send_reminder(reminder_id: int):
                     if wants_basket and allow_network():
                         # best-effort call to /analyze_basket - may not exist
                         try:
-                            resp = requests.get(CAM_URL + '/analyze_basket?camera=laundry', timeout=3)
+                            resp = _http_client.get(CAM_URL + '/analyze_basket?camera=laundry')
                             if resp.status_code < 400:
                                 j = resp.json()
                                 print('[REMINDER][BASKET]', j)
@@ -309,14 +312,14 @@ def _send_reminder(reminder_id: int):
                         try:
                             # fetch med details or notify med module
                             if allow_network():
-                                requests.get(f"{MEDS_URL}/", timeout=3)
+                                _http_client.get(f"{MEDS_URL}/")
                         except Exception:
                             pass
                     else:
                         if 'med' in reminder.text.lower() or 'pill' in reminder.text.lower():
                             try:
                                 if allow_network():
-                                    m = requests.get(MEDS_URL + '/', timeout=3).json()
+                                    m = _http_client.get(MEDS_URL + '/').json()
                                     print('[REMINDER][MEDS]', len(m), 'meds found')
                             except Exception:
                                 pass

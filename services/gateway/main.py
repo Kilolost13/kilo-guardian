@@ -76,6 +76,9 @@ def _validate_header_token(header_token: Optional[str]) -> bool:
     if not header_token:
         return False
     try:
+        # Pre-compute SHA256 hash once for efficiency
+        sha256_hash = hashlib.sha256(header_token.encode()).hexdigest()
+        
         with Session(engine) as sess:
             # Get all non-revoked tokens
             q = sess.exec(select(AdminToken).where(AdminToken.revoked == False))
@@ -92,10 +95,8 @@ def _validate_header_token(header_token: Optional[str]) -> bool:
                     except ImportError:
                         pass
                 else:
-                    # SHA256 hash - simple comparison
-                    h = hashlib.sha256()
-                    h.update(header_token.encode())
-                    if h.hexdigest() == stored_hash:
+                    # SHA256 hash - simple comparison (use pre-computed hash)
+                    if sha256_hash == stored_hash:
                         return True
 
             return False
