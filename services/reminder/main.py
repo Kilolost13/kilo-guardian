@@ -10,6 +10,7 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 import threading
 import httpx
+import json
 
 # Reminder models - import shared definitions to avoid duplicate table registration
 from shared.models import Reminder, ReminderPreset
@@ -20,6 +21,9 @@ gateway_validate_token = None
 def allow_network():
     """Check if network egress is allowed via ALLOW_NETWORK env var."""
     return os.getenv('ALLOW_NETWORK', 'false').lower() in ('true', '1', 'yes')
+
+HABITS_URL = os.getenv('HABITS_URL', 'http://habits:8000')
+AI_EVENT_URL = os.getenv('AI_EVENT_URL', 'http://ai_brain:9004/ingest/event')
 
 # db helper: try absolute import first, then package-aware fallback
 try:
@@ -172,6 +176,42 @@ _scheduler_lock = threading.Lock()
 
 # Shared httpx client for connection pooling (more efficient than requests)
 _http_client = httpx.Client(timeout=5.0)
+
+RETRY_COUNT = int(os.getenv('HTTP_RETRY_COUNT', '2'))
+RETRY_DELAY = float(os.getenv('HTTP_RETRY_DELAY', '0.3'))
+CB_FAIL_THRESHOLD = int(os.getenv('HTTP_CB_FAILS', '5'))
+CB_COOLDOWN = float(os.getenv('HTTP_CB_COOLDOWN', '15'))
+_cb_state = {"open_until": 0.0, "fail_count": 0}
+
+
+def _post_json_with_retry(url: str, payload: dict, tag: str, retries: int = None, timeout: float = 5.0):
+    global _cb_state
+    retries = RETRY_COUNT if retries is None else retries
+    now = __import__('time').time()
+    if _cb_state['open_until'] > now:
+        print(f"[{tag}] circuit open; skipping call to {url}")
+        return False
+
+    last_error = None
+    for attempt in range(retries + 1):
+        try:
+            resp = _http_client.post(url, json=payload, timeout=timeout)
+            if resp.status_code < 400:
+                _cb_state['fail_count'] = 0
+                return True
+            last_error = f"status {resp.status_code}: {resp.text}"
+        except Exception as e:
+            last_error = str(e)
+        __import__('time').sleep(RETRY_DELAY * (attempt + 1))
+
+    _cb_state['fail_count'] += 1
+    if _cb_state['fail_count'] >= CB_FAIL_THRESHOLD:
+        _cb_state['open_until'] = now + CB_COOLDOWN
+        print(f"[{tag}] circuit opened for {CB_COOLDOWN}s after failures")
+
+    if last_error:
+        print(f"[{tag}] failed after retries: {last_error}")
+    return False
 
 
 def _send_reminder(reminder_id: int):
@@ -478,6 +518,59 @@ async def create_reminder(request: Request):
         }
 
 
+@app.post("/series")
+async def create_series(payload: dict):
+    """Create a set of reminders tied to a medication."""
+    med_id = payload.get("med_id")
+    name = payload.get("name") or "Medication"
+    freq = payload.get("frequency_per_day") or 1
+    times = payload.get("times") or []
+    start_date = payload.get("start_date") or datetime.utcnow().date().isoformat()
+    schedule_text = payload.get("schedule")
+
+    if not med_id:
+        raise HTTPException(status_code=400, detail="med_id is required")
+
+    created = []
+    with Session(engine) as session:
+        # build reminder times
+        if times:
+            when_list = []
+            for t in times:
+                # if only HH:MM, combine with start_date
+                when_list.append(f"{start_date}T{t}")
+        else:
+            # fallback: create freq reminders spaced over day
+            when_list = []
+            for i in range(freq):
+                hour = int(8 + (i * (14 / max(freq,1))))  # spread between 8am-10pm
+                when_list.append(f"{start_date}T{hour:02d}:00:00")
+
+        for when in when_list:
+            r = Reminder(
+                text=f"Take {name}",
+                when=when,
+                recurrence="daily",
+                sent=False,
+                preset_id=None
+            )
+            session.add(r)
+            session.commit()
+            session.refresh(r)
+            _schedule_reminder(r)
+            created.append(r)
+
+    # best-effort AI event log
+    _post_json_with_retry(AI_EVENT_URL, {
+        "type": "reminder.created",
+        "source": "reminder",
+        "destination": ["habits"],
+        "payload": {"med_id": med_id, "count": len(created)}
+    }, tag="REMINDER->AI")
+
+    return {"created": [c.id for c in created], "med_id": med_id, "count": len(created), "schedule": schedule_text}
+
+
 @app.delete("/reminders/{reminder_id}")
 async def delete_reminder_plural(reminder_id: int, request: Request):
     """Delete a reminder using plural endpoint"""
@@ -718,6 +811,35 @@ def mark_reminder_sent(reminder_id: int, request: Request):
         except Exception:
             pass
         return db_r
+
+
+@app.post("/{reminder_id}/complete")
+def complete_reminder(reminder_id: int, status: str = "completed"):
+    """Mark reminder completed/skipped and inform habits + AI."""
+    with Session(engine) as session:
+        db_r = session.get(Reminder, reminder_id)
+        if not db_r:
+            raise HTTPException(status_code=404, detail="Reminder not found")
+        db_r.sent = True if status == "completed" else db_r.sent
+        session.add(db_r)
+        session.commit()
+
+    # notify habits (best-effort)
+    _post_json_with_retry(f"{HABITS_URL}/log", {
+        "reminder_id": reminder_id,
+        "status": status,
+        "timestamp": datetime.utcnow().isoformat()
+    }, tag="REMINDER->HABITS")
+
+    # log AI event
+    _post_json_with_retry(AI_EVENT_URL, {
+        "type": "reminder.completed",
+        "source": "reminder",
+        "destination": ["habits"],
+        "payload": {"reminder_id": reminder_id, "status": status}
+    }, tag="REMINDER->AI")
+
+    return {"ok": True, "reminder_id": reminder_id, "status": status}
 
 
 @app.post("/{reminder_id}/snooze")

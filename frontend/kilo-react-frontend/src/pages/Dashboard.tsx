@@ -46,6 +46,7 @@ const Dashboard: React.FC = () => {
   const { deviceInfo, features } = useDeviceDetection();
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   const handleVoiceSubmit = useCallback(async (voiceText: string) => {
     if (!voiceText.trim()) return;
@@ -107,7 +108,14 @@ const Dashboard: React.FC = () => {
   }; 
 
   const scrollToBottom = () => {
-    const el = messagesEndRef.current as (HTMLDivElement | null | any);
+    // Scroll only the chat container, not the entire window
+    const container = messagesContainerRef.current;
+    if (container) {
+      container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+      return;
+    }
+    // Fallback: still try to scroll the marker into view
+    const el = messagesEndRef.current;
     if (el && typeof el.scrollIntoView === 'function') {
       el.scrollIntoView({ behavior: 'smooth' });
     }
@@ -299,7 +307,7 @@ const Dashboard: React.FC = () => {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+        <div ref={messagesContainerRef} className="flex-1 overflow-y-auto mb-4 space-y-4">
           {messages.map((msg) => (
             <div
               key={msg.id}

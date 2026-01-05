@@ -128,32 +128,80 @@ const Medications: React.FC = () => {
         formData.append('file', imageBlob, 'prescription.jpg');
       }
 
-      // Send to meds service for OCR extraction
-      const response = await api.post('/meds/extract', formData, {
+      // Send to meds service for OCR extraction (async processing)
+      const submitResponse = await api.post('/meds/extract', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
       });
 
-      // The meds/extract endpoint automatically adds the medication
-      // and returns the created medication object
-      if (response.data && response.data.name && response.data.name.trim() !== '') {
-        setScanResult({
-          success: true,
-          message: `✓ Added ${response.data.name}!`,
-          data: response.data,
-        });
-        fetchMedications();
-      } else {
-        setScanResult({
-          success: false,
-          message: 'Could not read medication name. Check lighting and try again.',
-          data: response.data,
-        });
+      const { job_id } = submitResponse.data;
+      if (!job_id) {
+        throw new Error('No job_id returned from server');
       }
+
+      console.log(`[OCR] Job submitted: ${job_id}, polling for results...`);
+
+      // Poll for OCR results every 3 seconds
+      const maxPolls = 60; // Poll for up to 3 minutes
+      let pollCount = 0;
+
+      const pollForResults = async (): Promise<void> => {
+        while (pollCount < maxPolls) {
+          pollCount++;
+
+          try {
+            const statusResponse = await api.get(`/meds/extract/${job_id}/status`);
+            const { status, result, error, ocr_text } = statusResponse.data;
+
+            console.log(`[OCR] Poll ${pollCount}: status=${status}`);
+
+            if (status === 'completed' && result) {
+              // Success! Medication was extracted and added
+              setScanResult({
+                success: true,
+                message: result.name
+                  ? `✓ Added ${result.name}!`
+                  : '✓ Prescription scanned! Check data below.',
+                data: { ...result, ocr_text },
+              });
+              fetchMedications(); // Refresh medications list
+              return;
+            } else if (status === 'failed') {
+              // OCR processing failed
+              setScanResult({
+                success: false,
+                message: error || 'OCR processing failed. Please try again with better lighting.',
+              });
+              return;
+            } else if (status === 'processing' || status === 'pending') {
+              // Still processing, wait and poll again
+              await new Promise((resolve) => setTimeout(resolve, 3000)); // Wait 3 seconds
+            } else {
+              // Unknown status
+              throw new Error(`Unknown job status: ${status}`);
+            }
+          } catch (pollError: unknown) {
+            console.error('[OCR] Polling error:', pollError);
+            // Continue polling unless we've exceeded max polls
+            if (pollCount >= maxPolls) {
+              throw pollError;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 3000));
+          }
+        }
+
+        // Timeout after max polls
+        throw new Error('OCR processing timeout. Please try again.');
+      };
+
+      await pollForResults();
+
     } catch (error: unknown) {
       console.error('Prescription scan error:', error);
-      const message = (error && typeof error === 'object' && 'response' in error && (error as any).response?.data?.detail) || 'Failed to scan prescription. Please try again.';
+      const message = (error && typeof error === 'object' && 'response' in error && (error as any).response?.data?.detail)
+        || (error instanceof Error ? error.message : null)
+        || 'Failed to scan prescription. Please try again.';
       setScanResult({
         success: false,
         message,

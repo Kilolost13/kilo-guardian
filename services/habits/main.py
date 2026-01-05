@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
 from sqlmodel import SQLModel, create_engine, Session, Field
 from typing import Optional, List
 import os
 import httpx
 import datetime
+import json
 
 # Habit models
 class Habit(SQLModel, table=True):
@@ -12,15 +13,46 @@ class Habit(SQLModel, table=True):
     frequency: str = "daily"
     target_count: int = 1
     active: bool = True
+    med_id: Optional[int] = Field(default=None, index=True)
+    preferred_times: Optional[str] = None  # comma-separated HH:MM
+    created_at: str = Field(default_factory=lambda: datetime.datetime.utcnow().isoformat())
 
 class HabitCompletion(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     habit_id: int
     completion_date: str
     count: int = 1
+    reminder_id: Optional[int] = None
+    status: Optional[str] = None  # completed | skipped
+    med_id: Optional[int] = None
 
 db_url = "sqlite:////tmp/habits.db"
 engine = create_engine(db_url, echo=False)
+
+
+def _ensure_columns():
+    """Best-effort schema drift fixer for new columns when using SQLite."""
+    try:
+        with engine.connect() as conn:
+            cols = conn.execute("PRAGMA table_info(habit)").fetchall()
+            col_names = {c[1] for c in cols}
+            if 'med_id' not in col_names:
+                conn.execute("ALTER TABLE habit ADD COLUMN med_id INTEGER")
+            if 'preferred_times' not in col_names:
+                conn.execute("ALTER TABLE habit ADD COLUMN preferred_times VARCHAR")
+            if 'created_at' not in col_names:
+                conn.execute("ALTER TABLE habit ADD COLUMN created_at VARCHAR")
+        with engine.connect() as conn:
+            cols = conn.execute("PRAGMA table_info(habitcompletion)").fetchall()
+            col_names = {c[1] for c in cols}
+            if 'reminder_id' not in col_names:
+                conn.execute("ALTER TABLE habitcompletion ADD COLUMN reminder_id INTEGER")
+            if 'status' not in col_names:
+                conn.execute("ALTER TABLE habitcompletion ADD COLUMN status VARCHAR")
+            if 'med_id' not in col_names:
+                conn.execute("ALTER TABLE habitcompletion ADD COLUMN med_id INTEGER")
+    except Exception as e:
+        print("[HABITS] Schema check failed (non-fatal):", e)
 
 
 from contextlib import asynccontextmanager
@@ -30,6 +62,7 @@ from contextlib import asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
         SQLModel.metadata.create_all(engine)
+        _ensure_columns()
     except Exception:
         pass
     yield
@@ -128,6 +161,98 @@ def add_habit(h: Habit, background_tasks: BackgroundTasks = None):
         import asyncio
         asyncio.create_task(_send_to_ai_brain(h))
     return h
+
+
+@app.post("/med-adherence")
+def upsert_med_adherence(payload: dict, request: Request = None, background_tasks: BackgroundTasks = None):
+    """
+    Upsert a habit representing medication adherence, keyed by med_id.
+    Expected payload: { med_id, name, target_per_day, times: ["08:00", ...] }
+    """
+    med_id = payload.get("med_id")
+    if not med_id:
+        raise HTTPException(status_code=400, detail="med_id is required")
+
+    name = payload.get("name") or f"Medication {med_id}"
+    target = payload.get("target_per_day") or payload.get("frequency_per_day") or 1
+    times = payload.get("times") or []
+    times_str = ",".join(times) if isinstance(times, list) else str(times)
+
+    with Session(engine) as session:
+        existing = session.query(Habit).filter(Habit.med_id == med_id).first()
+        if existing:
+            existing.name = name
+            existing.target_count = target
+            existing.frequency = "daily"
+            existing.preferred_times = times_str
+            session.add(existing)
+            session.commit()
+            session.refresh(existing)
+            habit = existing
+        else:
+            habit = Habit(
+                name=name,
+                frequency="daily",
+                target_count=target,
+                med_id=med_id,
+                preferred_times=times_str,
+            )
+            session.add(habit)
+            session.commit()
+            session.refresh(habit)
+
+    if background_tasks:
+        background_tasks.add_task(_send_to_ai_brain, habit)
+    else:
+        import asyncio
+        asyncio.create_task(_send_to_ai_brain(habit))
+
+    return habit
+
+
+@app.post("/log")
+def log_med_adherence(payload: dict, background_tasks: BackgroundTasks = None):
+    """
+    Record a completion/skip event for a med-linked habit.
+    Payload: { habit_id?, med_id?, reminder_id?, status, timestamp }
+    """
+    habit_id = payload.get("habit_id")
+    med_id = payload.get("med_id")
+    status = payload.get("status", "completed")
+    reminder_id = payload.get("reminder_id")
+    ts = payload.get("timestamp") or datetime.datetime.utcnow().isoformat()
+
+    if not habit_id and not med_id:
+        raise HTTPException(status_code=400, detail="habit_id or med_id required")
+
+    with Session(engine) as session:
+        habit = None
+        if habit_id:
+            habit = session.get(Habit, habit_id)
+        if not habit and med_id:
+            habit = session.query(Habit).filter(Habit.med_id == med_id).first()
+        if not habit:
+            raise HTTPException(status_code=404, detail="Habit not found for logging")
+
+        completion = HabitCompletion(
+            habit_id=habit.id,
+            completion_date=ts,
+            count=1,
+            reminder_id=reminder_id,
+            status=status,
+            med_id=med_id or habit.med_id,
+        )
+        session.add(completion)
+        session.commit()
+        session.refresh(completion)
+
+    if background_tasks:
+        background_tasks.add_task(_send_completion_to_ai_brain, habit, completion)
+    else:
+        import asyncio
+        asyncio.create_task(_send_completion_to_ai_brain(habit, completion))
+
+    return completion
 
 @app.put("/{habit_id}")
 def update_habit(habit_id: int, h: Habit):

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '../components/shared/Button';
 import { Card } from '../components/shared/Card';
@@ -12,7 +12,15 @@ const Admin: React.FC = () => {
   const navigate = useNavigate();
   const { deviceInfo, features } = useDeviceDetection();
   const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null);
-  const [memoryStats, setMemoryStats] = useState({ total: 0, public: 0, private: 0, confidential: 0 });
+  const [userStats, setUserStats] = useState({
+    medications: 0,
+    reminders: 0,
+    habits: 0,
+    daysTracking: 0,
+    prescriptionsScanned: 0,
+  });
+  const [promMetrics, setPromMetrics] = useState<Record<string, any>>({});
+  const [promMetricsLoading, setPromMetricsLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [mlTestResult, setMlTestResult] = useState<any>(null);
   const [mlTestHabitName, setMlTestHabitName] = useState('Exercise');
@@ -22,28 +30,59 @@ const Admin: React.FC = () => {
   const openCameraModal = () => setCameraModalOpen(true);
   const closeCameraModal = () => setCameraModalOpen(false);
 
-  useEffect(() => {
-    fetchAdminData();
+  const calculateDaysTracking = useCallback((meds: any[]) => {
+    if (!Array.isArray(meds) || meds.length === 0) return 0;
+
+    const now = Date.now();
+    const earliest = meds.reduce<Date | null>((min, m) => {
+      const date = m?.created_at ? new Date(m.created_at) : null;
+      if (!date || isNaN(date.getTime())) return min;
+      if (!min) return date;
+      return date < min ? date : min;
+    }, null);
+
+    if (!earliest) return 0;
+
+    const days = Math.floor((now - earliest.getTime()) / (1000 * 60 * 60 * 24));
+    return days < 0 ? 0 : days;
   }, []);
 
-  const fetchAdminData = async () => {
+  const fetchAdminData = useCallback(async () => {
+    setPromMetricsLoading(true);
     try {
       const statusRes = await api.get('/admin/status');
-      setSystemStatus(statusRes.data);
+      const [medsRes, remindersRes, habitsRes, metricsRes] = await Promise.all([
+        api.get('/meds/'),
+        api.get('/reminder/reminders'),
+        api.get('/habits/'),
+        api.get('/admin/metrics/summary').catch(() => null),
+      ]);
 
-      // Mock memory stats - replace with actual API call
-      setMemoryStats({
-        total: 1234,
-        public: 800,
-        private: 300,
-        confidential: 134,
+      setSystemStatus(statusRes.data);
+      setUserStats({
+        medications: medsRes.data?.length || 0,
+        reminders: remindersRes.data?.reminders?.length || 0,
+        habits: habitsRes.data?.length || 0,
+        daysTracking: calculateDaysTracking(medsRes.data || []),
+        prescriptionsScanned: (medsRes.data || []).filter((m: any) => m.from_ocr).length || 0,
       });
+
+      if (metricsRes && metricsRes.data) {
+        setPromMetrics(metricsRes.data?.services || {});
+      } else {
+        setPromMetrics({});
+      }
     } catch (error) {
       console.error('Failed to fetch admin data:', error);
     } finally {
       setLoading(false);
+      setPromMetricsLoading(false);
     }
-  };
+  }, [calculateDaysTracking]);
+
+  useEffect(() => {
+    fetchAdminData();
+  }, [fetchAdminData]);
 
   const createBackup = async () => {
     try {
@@ -86,6 +125,18 @@ const Admin: React.FC = () => {
     </div>
   );
 
+  const formatOpenUntil = (value: any) => {
+    if (!value || Number.isNaN(Number(value)) || Number(value) <= 0) return '—';
+    const date = new Date(Number(value) * 1000);
+    if (Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleString();
+  };
+
+  const formatNumber = (value: any) => {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+    return Math.round(Number(value) * 100) / 100;
+  };
+
   return (
     <div className="min-h-screen zombie-gradient p-6">
       <div className="flex justify-between items-center mb-6">
@@ -121,28 +172,85 @@ const Admin: React.FC = () => {
             </Card>
           </div>
 
-          {/* Memory Statistics */}
+          {/* Health Stats */}
           <div className="mb-6">
-            <h2 className="text-2xl font-bold text-zombie-green terminal-glow mb-4">MEMORY STATISTICS:</h2>
-            <Card>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="text-center p-4 bg-dark-bg border border-blue-600 rounded-lg">
-                  <p className="text-sm text-zombie-green">TOTAL MEMORIES</p>
-                  <p className="text-4xl font-bold text-blue-600">{memoryStats.total}</p>
+            <h2 className="text-2xl font-bold text-zombie-green terminal-glow mb-4">📊 YOUR HEALTH STATS</h2>
+            <Card className="bg-gray-800">
+              <div className="space-y-3 p-2">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-300">💊 Medications Tracked:</span>
+                  <span className="text-2xl font-bold text-zombie-green">
+                    {userStats.medications}
+                  </span>
                 </div>
-                <div className="text-center p-4 bg-dark-bg border border-green-600 rounded-lg">
-                  <p className="text-sm text-zombie-green">PUBLIC</p>
-                  <p className="text-4xl font-bold text-green-600">{memoryStats.public}</p>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-300">⏰ Active Reminders:</span>
+                  <span className="text-2xl font-bold text-zombie-green">
+                    {userStats.reminders}
+                  </span>
                 </div>
-                <div className="text-center p-4 bg-dark-bg border border-yellow-600 rounded-lg">
-                  <p className="text-sm text-zombie-green">PRIVATE</p>
-                  <p className="text-4xl font-bold text-yellow-600">{memoryStats.private}</p>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-300">✓ Tracked Habits:</span>
+                  <span className="text-2xl font-bold text-zombie-green">
+                    {userStats.habits}
+                  </span>
                 </div>
-                <div className="text-center p-4 bg-dark-bg border border-red-600 rounded-lg">
-                  <p className="text-sm text-zombie-green">CONFIDENTIAL</p>
-                  <p className="text-4xl font-bold text-red-600">{memoryStats.confidential}</p>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-300">📅 Days Tracking:</span>
+                  <span className="text-2xl font-bold text-zombie-green">
+                    {userStats.daysTracking}
+                  </span>
+                </div>
+
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-300">📷 Prescriptions Scanned:</span>
+                  <span className="text-2xl font-bold text-zombie-green">
+                    {userStats.prescriptionsScanned}
+                  </span>
                 </div>
               </div>
+            </Card>
+          </div>
+
+          {/* Prometheus / Circuit Breakers */}
+          <div className="mb-6">
+            <h2 className="text-2xl font-bold text-zombie-green terminal-glow mb-4">📈 PROMETHEUS / CIRCUIT BREAKERS</h2>
+            <Card className="bg-gray-900">
+              {promMetricsLoading ? (
+                <div className="text-center py-6 text-zombie-green">Loading metrics…</div>
+              ) : Object.keys(promMetrics || {}).length === 0 ? (
+                <div className="text-center py-6 text-gray-400">No metrics available</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  {Object.entries(promMetrics).map(([svc, data]) => {
+                    const metrics = (data as any)?.metrics || {};
+                    const isOpen = metrics.cb_open !== undefined && metrics.cb_open !== null ? metrics.cb_open >= 0.5 : null;
+                    return (
+                      <div key={svc} className="border border-dark-border rounded-lg p-4 bg-dark-bg/70">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-lg font-semibold text-zombie-green capitalize">{svc}</div>
+                          <span className={`px-2 py-1 text-xs rounded-full ${isOpen === null ? 'bg-gray-700 text-gray-300' : isOpen ? 'bg-red-900 text-red-200' : 'bg-green-900 text-green-200'}`}>
+                            {isOpen === null ? 'Unknown' : isOpen ? 'Open' : 'Closed'}
+                          </span>
+                        </div>
+                        <div className="space-y-2 text-sm text-gray-200">
+                          <div className="flex justify-between"><span>Failures:</span><span className="font-mono">{formatNumber(metrics.cb_failures_total)}</span></div>
+                          <div className="flex justify-between"><span>Skips:</span><span className="font-mono">{formatNumber(metrics.cb_skips_total)}</span></div>
+                          <div className="flex justify-between"><span>Successes:</span><span className="font-mono">{formatNumber(metrics.cb_success_total)}</span></div>
+                          <div className="flex justify-between"><span>Open Until:</span><span className="font-mono">{formatOpenUntil(metrics.cb_open_until)}</span></div>
+                          <div className="flex justify-between"><span>Fetched:</span><span className="font-mono text-xs text-gray-400">{(data as any)?.fetched_at || '—'}</span></div>
+                        </div>
+                        {!(data as any)?.ok && (
+                          <div className="mt-2 text-xs text-yellow-400">{(data as any)?.message || 'Fetch issue'}</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </Card>
           </div>
 

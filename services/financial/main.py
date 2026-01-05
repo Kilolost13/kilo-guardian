@@ -12,6 +12,12 @@ import pytesseract
 import re
 import base64
 from contextlib import asynccontextmanager
+import hashlib
+from pathlib import Path
+try:
+    import PyPDF2  # optional for PDF text extraction
+except Exception:
+    PyPDF2 = None
 # db helper: try absolute import first, then package-aware fallback
 try:
     from db import get_engine
@@ -47,8 +53,23 @@ class Goal(SQLModel, table=True):
     completed: bool = False
 
 
+class IngestedDocument(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    filename: Optional[str] = None
+    content_type: Optional[str] = None
+    sha256: str = Field(index=True)
+    kind: Optional[str] = None  # receipt | statement | auto
+    status: Optional[str] = None
+    error: Optional[str] = None
+    transaction_count: int = 0
+    source_tag: Optional[str] = None
+    extracted_text: Optional[str] = None
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+
 # Centralized engine selection (prefers in-memory for tests and fallbacks if /data not writable)
 engine = get_engine('FINANCIAL_DB_URL', 'sqlite:////data/financial.db')
+UPLOAD_DIR = Path("/data/financial_uploads")
 
 
 # Scheduler control defaults (used by lifespan)
@@ -71,6 +92,10 @@ async def lifespan(app: FastAPI):
             ensure_column()
         except Exception:
             print("Warning: failed to run migration helper")
+        try:
+            UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            print("Warning: failed to create upload dir")
         # schedule nightly maintenance if enabled
         global _scheduler
         if ENABLE_NIGHTLY_MAINTENANCE:
@@ -107,6 +132,14 @@ app = FastAPI(title="Financial Service", lifespan=lifespan)
 
 # Instrument Prometheus metrics
 Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
+
+# Prometheus custom metrics for ingestion
+from prometheus_client import Counter
+
+ingest_total = Counter("financial_ingest_total", "Documents ingested", ["kind"])
+ingest_failed_total = Counter("financial_ingest_failed_total", "Failed ingests", ["kind", "reason"])
+ingest_duplicate_total = Counter("financial_ingest_duplicates_total", "Duplicate uploads", ["kind"])
+ingest_transactions_total = Counter("financial_ingest_transactions_total", "Transactions created from ingests", ["kind"])
 
 
 # Health check endpoints
@@ -498,6 +531,136 @@ def upload_receipt(file: UploadFile = File(...), background_tasks: BackgroundTas
     return {"transaction": tx_serialized, "items": items}
 
 
+@app.post("/ingest/document")
+def ingest_document(file: UploadFile = File(...), kind: str = "auto", background_tasks: BackgroundTasks = None):
+    content = file.file.read()
+    filename = file.filename or "upload"
+    content_type = file.content_type or ""
+    sha = _sha256_bytes(content)
+    source_tag = f"doc:{sha[:12]}"
+    requested_kind = (kind or "auto").lower()
+
+    # deduplicate by hash
+    with Session(engine) as session:
+        existing = session.exec(select(IngestedDocument).where(IngestedDocument.sha256 == sha)).first()
+        if existing:
+            ingest_duplicate_total.labels(existing.kind or "unknown").inc()
+            txs = session.exec(select(Transaction).where(Transaction.source == existing.source_tag)).all()
+            return {
+                "duplicate": True,
+                "document": existing.dict(),
+                "transactions": [t.dict() for t in txs],
+            }
+
+    # Save original file for audit/reference
+    try:
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        dest = UPLOAD_DIR / f"{sha}{Path(filename).suffix}"
+        with open(dest, "wb") as f:
+            f.write(content)
+    except Exception:
+        pass
+
+    text = _extract_text_generic(content, content_type, filename)
+    detected_kind = requested_kind if requested_kind != "auto" else _detect_document_kind(text, filename)
+
+    doc = IngestedDocument(
+        filename=filename,
+        content_type=content_type,
+        sha256=sha,
+        kind=detected_kind,
+        status="processing",
+        source_tag=source_tag,
+        extracted_text=text[:10000],  # cap for storage
+    )
+
+    transactions_created = []
+    items_created = []
+    try:
+        with Session(engine) as session:
+            session.add(doc)
+            session.commit()
+            session.refresh(doc)
+
+        if detected_kind == "receipt":
+            items, detected_total = _parse_receipt_items(text)
+            summed = sum(i['price'] for i in items)
+            total = detected_total if detected_total is not None and abs(detected_total - summed) > max(0.01, 0.1 * abs(summed)) else summed
+            t = Transaction(
+                amount=total,
+                description=f"Receipt ({filename})",
+                date=datetime.datetime.utcnow().isoformat(),
+                source=source_tag,
+            )
+            with Session(engine) as session:
+                session.add(t)
+                session.commit()
+                session.refresh(t)
+                for item in items:
+                    cat = _categorize_item(item.get('name', ''))
+                    ri = ReceiptItem(
+                        transaction_id=t.id,
+                        name=item['name'],
+                        price=item['price'],
+                        category=cat,
+                    )
+                    session.add(ri)
+                    items_created.append(ri.dict())
+                session.commit()
+                transactions_created.append(t.dict())
+            ingest_total.labels("receipt").inc()
+            ingest_transactions_total.labels("receipt").inc(len(transactions_created))
+        else:
+            txs = _parse_statement_transactions(text)
+            with Session(engine) as session:
+                for tx in txs:
+                    txn = Transaction(
+                        amount=tx['amount'],
+                        description=tx['description'],
+                        date=tx['date'],
+                        source=source_tag,
+                    )
+                    session.add(txn)
+                    session.commit()
+                    session.refresh(txn)
+                    transactions_created.append(txn.dict())
+            ingest_total.labels("statement").inc()
+            ingest_transactions_total.labels("statement").inc(len(transactions_created))
+
+        # update document row
+        with Session(engine) as session:
+            stored = session.get(IngestedDocument, doc.id)
+            if stored:
+                stored.status = "processed"
+                stored.transaction_count = len(transactions_created)
+                session.add(stored)
+                session.commit()
+
+        # async fan-out to AI if available
+        if background_tasks:
+            background_tasks.add_task(_send_receipt_to_ai_brain, text)
+        else:
+            import asyncio
+            asyncio.create_task(_send_receipt_to_ai_brain(text))
+
+        return {
+            "duplicate": False,
+            "document": doc.dict(),
+            "transactions": transactions_created,
+            "items": items_created if detected_kind == "receipt" else None,
+        }
+    except Exception as e:
+        ingest_failed_total.labels(detected_kind or "unknown", type(e).__name__).inc()
+        with Session(engine) as session:
+            stored = session.get(IngestedDocument, doc.id)
+            if stored:
+                stored.status = "failed"
+                stored.error = str(e)
+                session.add(stored)
+                session.commit()
+        raise HTTPException(status_code=500, detail=f"ingestion failed: {e}")
+
+
 @app.post("/admin/recalculate_categories")
 def recalculate_categories(request: Request, background_tasks: BackgroundTasks):
     """Trigger re-categorization. Requires ADMIN_TOKEN header when ADMIN_TOKEN is set.
@@ -562,6 +725,123 @@ def _recalculate_categories_background(batch_size: int = 200):
             offset += batch_size
     print(f"Recalculate categories completed: updated={updated}, total={total}")
     return {"updated": updated, "total": total}
+
+
+def _sha256_bytes(data: bytes) -> str:
+    h = hashlib.sha256()
+    h.update(data)
+    return h.hexdigest()
+
+
+def _extract_text_from_pdf(content: bytes) -> Optional[str]:
+    if not PyPDF2:
+        return None
+    try:
+        reader = PyPDF2.PdfReader(BytesIO(content))
+        texts = []
+        for page in reader.pages:
+            try:
+                texts.append(page.extract_text() or "")
+            except Exception:
+                continue
+        return "\n".join(texts)
+    except Exception:
+        return None
+
+
+def _extract_text_generic(content: bytes, content_type: Optional[str], filename: Optional[str]) -> str:
+    # If text file, decode directly
+    if content_type and content_type.startswith("text"):
+        try:
+            return content.decode(errors="ignore")
+        except Exception:
+            pass
+
+    # If PDF
+    if (content_type and "pdf" in content_type.lower()) or (filename and filename.lower().endswith(".pdf")):
+        pdf_text = _extract_text_from_pdf(content)
+        if pdf_text:
+            return pdf_text
+
+    # Try OCR on image
+    try:
+        img = Image.open(BytesIO(content))
+        return pytesseract.image_to_string(img)
+    except Exception:
+        # fallback: best-effort decode
+        try:
+            return content.decode(errors="ignore")
+        except Exception:
+            return ""
+
+
+def _detect_document_kind(text: str, filename: Optional[str]) -> str:
+    lower = text.lower()
+    if "statement" in lower or "ending balance" in lower or "available balance" in lower:
+        return "statement"
+    if filename and any(filename.lower().endswith(ext) for ext in [".pdf", ".stmt", ".ofx"]):
+        return "statement"
+    if "total" in lower and "tax" in lower:
+        return "receipt"
+    return "statement"  # default to statement for banking docs
+
+
+def _parse_statement_transactions(text: str) -> List[Dict[str, object]]:
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    txs: List[Dict[str, object]] = []
+    today = datetime.datetime.utcnow().date()
+
+    patterns = [
+        re.compile(r"^(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<desc>.+?)\s+(?P<amount>[()+\-]?\d+[.,]\d{2})$"),
+        re.compile(r"^(?P<date>\d{2}/\d{2}/\d{4})\s+(?P<desc>.+?)\s+(?P<amount>[()+\-]?\d+[.,]\d{2})$"),
+        re.compile(r"^(?P<desc>.+?)\s+(?P<amount>[()+\-]?\d+[.,]\d{2})$")
+    ]
+
+    def _normalize_date(ds: Optional[str]) -> str:
+        if not ds:
+            return today.isoformat()
+        try:
+            if "/" in ds:
+                m, d, y = ds.split("/")
+                return datetime.date(int(y), int(m), int(d)).isoformat()
+            return datetime.date.fromisoformat(ds).isoformat()
+        except Exception:
+            return today.isoformat()
+
+    for line in lines:
+        matched = None
+        for pat in patterns:
+            m = pat.match(line)
+            if m:
+                matched = m
+                break
+        if not matched:
+            continue
+        gd = matched.groupdict()
+        desc = gd.get("desc") or "item"
+        amt_raw = gd.get("amount", "0")
+        # handle parentheses negatives
+        sign = -1.0 if amt_raw.startswith("(") and amt_raw.endswith(")") else 1.0
+        amt = _normalize_price(amt_raw)
+        amt *= sign
+        date_str = _normalize_date(gd.get("date"))
+        txs.append({
+            "description": desc.strip(),
+            "amount": float(amt),
+            "date": date_str,
+            "category": _categorize_item(desc),
+        })
+
+    # deduplicate by desc+amount+date
+    seen = set()
+    deduped = []
+    for tx in txs:
+        key = (tx["description"].lower(), round(tx["amount"], 2), tx["date"])
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(tx)
+    return deduped
 
 
 async def _send_to_ai_brain(t: Transaction):

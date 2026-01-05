@@ -104,6 +104,25 @@ def _validate_header_token(header_token: Optional[str]) -> bool:
         return False
 
 
+def _is_admin_request(request: Request) -> bool:
+    """Return True if the request contains a valid admin credential.
+
+    Accepts either a stored admin token (X-Admin-Token), or the bootstrap
+    LIBRARY_ADMIN_KEY for environments still using that static key.
+    """
+    header = request.headers.get('x-admin-token')
+    library_admin_key = os.environ.get('LIBRARY_ADMIN_KEY')
+
+    if header and library_admin_key and header.strip() == library_admin_key.strip():
+        return True
+
+    auth_header = request.headers.get('authorization')
+    if auth_header and library_admin_key and library_admin_key in auth_header:
+        return True
+
+    return _validate_header_token(header)
+
+
 @app.post("/admin/tokens")
 async def create_admin_token(request: Request):
     """Create a new admin token. If this is the first token ever created, allow creation without auth.
@@ -197,19 +216,7 @@ async def admin_ai_brain_metrics(request: Request):
 
     Validates X-Admin-Token using the gateway's token store. Returns raw Prometheus metrics text.
     """
-    header = request.headers.get('x-admin-token')
-    # Allow either a valid stored admin token, or the static LIBRARY_ADMIN_KEY for bootstrap/admin operations
-    LIBRARY_ADMIN_KEY = os.environ.get('LIBRARY_ADMIN_KEY')
-    logger.info(f"admin metrics auth header: {repr(header)}, LIBRARY_ADMIN_KEY: {repr(LIBRARY_ADMIN_KEY)}")
-    # Allow explicit LIBRARY_ADMIN_KEY match or stored admin tokens
-    if header and LIBRARY_ADMIN_KEY and header.strip() == LIBRARY_ADMIN_KEY.strip():
-        valid = True
-    elif request.headers.get('authorization') and LIBRARY_ADMIN_KEY and LIBRARY_ADMIN_KEY in request.headers.get('authorization'):
-        valid = True
-    else:
-        valid = _validate_header_token(header)
-
-    if not valid:
+    if not _is_admin_request(request):
         raise HTTPException(status_code=401, detail='Unauthorized')
 
     service_url = SERVICE_URLS.get('ai_brain')
@@ -266,6 +273,88 @@ async def admin_status():
 
     return out
 
+
+def _parse_prometheus_metrics(text: str, service_label: str):
+    """Lightweight Prometheus exposition parser for a small metric subset.
+
+    Extracts circuit-breaker related metrics and ignores the rest to keep
+    latency minimal and avoid pulling in heavy parsers.
+    """
+    target_metrics = {
+        "cb_open": None,
+        "cb_open_until": None,
+        "cb_failures_total": None,
+        "cb_skips_total": None,
+        "cb_success_total": None,
+    }
+
+    if not text:
+        return target_metrics
+
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        for metric_name in list(target_metrics.keys()):
+            if not line.startswith(metric_name):
+                continue
+
+            # Ensure we only capture the metric for this service label if present
+            if "{" in line and f'service="{service_label}"' not in line:
+                continue
+
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            try:
+                target_metrics[metric_name] = float(parts[-1])
+            except ValueError:
+                continue
+    return target_metrics
+
+
+@app.get("/admin/metrics/summary")
+async def admin_metrics_summary(request: Request):
+    """Summarize Prometheus circuit-breaker metrics from core services.
+
+    Requires admin auth (X-Admin-Token or LIBRARY_ADMIN_KEY). Returns a small
+    JSON payload so the admin UI can render a status card without parsing the
+    entire exposition format.
+    """
+    if not _is_admin_request(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    import httpx
+    from datetime import datetime
+
+    services_to_query = {
+        "meds": SERVICE_URLS.get("meds"),
+        "reminder": SERVICE_URLS.get("reminder"),
+        "habits": SERVICE_URLS.get("habits"),
+    }
+
+    results = {}
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        for name, base_url in services_to_query.items():
+            entry = {"ok": False, "fetched_at": datetime.utcnow().isoformat(), "metrics": None, "message": None}
+            if not base_url:
+                entry["message"] = "no service url"
+                results[name] = entry
+                continue
+
+            metrics_url = f"{base_url.rstrip('/')}/metrics"
+            try:
+                resp = await client.get(metrics_url)
+                entry["ok"] = resp.status_code < 400
+                if resp.status_code < 400:
+                    entry["metrics"] = _parse_prometheus_metrics(resp.text, service_label=name)
+                else:
+                    entry["message"] = f"status {resp.status_code}"
+            except Exception as e:
+                entry["message"] = str(e)
+            results[name] = entry
+
+    return {"services": results, "generated_at": datetime.utcnow().isoformat()}
+
 async def _proxy(request: Request, service: str, path: str):
     service_url = SERVICE_URLS.get(service)
     if not service_url:
@@ -279,7 +368,7 @@ async def _proxy(request: Request, service: str, path: str):
     # Use a slightly more robust request with timing and retries for slow endpoints
     retries = 2
     backoff = 0.5
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:  # Increased timeout for OCR/LLM processing
         last_exc = None
         for attempt in range(1, retries + 1):
             start_ts = time.time()
@@ -343,36 +432,41 @@ async def proxy_all(request: Request, service: str, path: str):
 async def proxy_root(request: Request, service: str):
     return await _proxy(request, service, "")
 
-# Socket.IO support for real-time updates
-import socketio
+# Socket.IO support for real-time updates (optional dependency)
+try:
+    import socketio
+except ImportError:  # pragma: no cover - optional path for minimal installs
+    socketio = None
+    logger.warning("python-socketio not installed; skipping real-time updates")
 
-# Create Socket.IO server
-sio = socketio.AsyncServer(
-    async_mode='asgi',
-    cors_allowed_origins='*',
-    logger=False,
-    engineio_logger=False
-)
+if socketio:
+    # Create Socket.IO server
+    sio = socketio.AsyncServer(
+        async_mode='asgi',
+        cors_allowed_origins='*',
+        logger=False,
+        engineio_logger=False
+    )
 
-# Wrap with ASGI app
-socket_app = socketio.ASGIApp(
-    socketio_server=sio,
-    socketio_path='socket.io'
-)
+    # Wrap with ASGI app
+    socket_app = socketio.ASGIApp(
+        socketio_server=sio,
+        socketio_path='socket.io'
+    )
 
-# Mount Socket.IO app
-app.mount('/socket.io', socket_app)
+    # Mount Socket.IO app
+    app.mount('/socket.io', socket_app)
 
-@sio.event
-async def connect(sid, environ):
-    logger.info(f"Socket.IO client connected: {sid}")
-    await sio.emit('connected', {'status': 'ok'}, room=sid)
+    @sio.event
+    async def connect(sid, environ):
+        logger.info(f"Socket.IO client connected: {sid}")
+        await sio.emit('connected', {'status': 'ok'}, room=sid)
 
-@sio.event
-async def disconnect(sid):
-    logger.info(f"Socket.IO client disconnected: {sid}")
+    @sio.event
+    async def disconnect(sid):
+        logger.info(f"Socket.IO client disconnected: {sid}")
 
-@sio.event
-async def ping(sid, data):
-    """Handle ping from client"""
-    await sio.emit('pong', {'timestamp': time.time()}, room=sid)
+    @sio.event
+    async def ping(sid, data):
+        """Handle ping from client"""
+        await sio.emit('pong', {'timestamp': time.time()}, room=sid)
