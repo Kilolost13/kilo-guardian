@@ -69,7 +69,7 @@ def _ensure_columns():
             if 'created_at' not in names:
                 conn.execute("ALTER TABLE med ADD COLUMN created_at VARCHAR")
     except Exception as e:
-        print("[MEDS] Schema check failed (non-fatal):", e)
+        logger.warning(f"[MEDS] Schema check failed (non-fatal): {e}")
 
 from contextlib import asynccontextmanager
 

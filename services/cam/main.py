@@ -70,16 +70,16 @@ try:
                 'conf_threshold': 0.5,
                 'nms_threshold': 0.4
             }
-            print("YOLO object detector loaded successfully")
+            logger.info("YOLO object detector loaded successfully")
         except Exception as e:
-            print(f"Failed to initialize YOLO detector: {e}")
+            logger.warning(f"Failed to initialize YOLO detector: {e}")
             object_detector = None
     else:
-        print("YOLO model files not found, using basic object detection")
+        logger.info("YOLO model files not found, using basic object detection")
         object_detector = None
 
 except Exception as e:
-    print(f"Object detector setup failed: {e}")
+    logger.error(f"Object detector setup failed: {e}")
     object_detector = None
 
 class PTZHardwareInterface:
@@ -94,22 +94,22 @@ class PTZHardwareInterface:
         """Connect to PTZ hardware"""
         if connection_string.startswith("mock://"):
             self.connection_type = "mock"
-            print(f"Connected to mock PTZ controller: {connection_string}")
+            logger.info(f"Connected to mock PTZ controller: {connection_string}")
         elif connection_string.startswith("/dev/"):
             self.connection_type = "serial"
             # TODO: Implement serial connection
-            print(f"Serial PTZ connection not implemented: {connection_string}")
+            logger.warning(f"Serial PTZ connection not implemented: {connection_string}")
         elif "://" in connection_string:
             self.connection_type = "network"
             # TODO: Implement network connection (ONVIF, VISCA, etc.)
-            print(f"Network PTZ connection not implemented: {connection_string}")
+            logger.warning(f"Network PTZ connection not implemented: {connection_string}")
         else:
             raise ValueError(f"Unsupported PTZ connection string: {connection_string}")
 
     def set_pan_tilt_zoom(self, pan: float, tilt: float, zoom: float):
         """Set PTZ position"""
         if self.connection_type == "mock":
-            print(".2f")
+            logger.debug("PTZ position read")
             return True
         # TODO: Implement actual hardware control
         return False
@@ -132,7 +132,7 @@ class PTZHardwareInterface:
     def stop_movement(self):
         """Stop all PTZ movement"""
         if self.connection_type == "mock":
-            print("Mock PTZ: Movement stopped")
+            logger.debug("Mock PTZ: Movement stopped")
         # TODO: Implement actual stop command
 
 # Global hardware interface
@@ -479,7 +479,7 @@ def detect_objects_yolo(image: np.ndarray) -> List[Dict]:
         return filtered_detections
 
     except Exception as e:
-        print(f"Object detection failed: {e}")
+        logger.error(f"Object detection failed: {e}")
         return []
 
 
@@ -543,7 +543,7 @@ def detect_objects_basic(image: np.ndarray) -> List[Dict]:
                 })
 
     except Exception as e:
-        print(f"Basic object detection failed: {e}")
+        logger.error(f"Basic object detection failed: {e}")
 
     return detections
 
@@ -836,7 +836,7 @@ async def detect_activity(file: UploadFile = File(...)):
             }
             requests.post(os.getenv('AI_BRAIN_URL', 'http://ai_brain:9004') + '/ingest/cam_activity', json=payload, timeout=2)
         except Exception as e:
-            print(f"Failed to send activity data to AI brain: {e}")
+            logger.error(f"Failed to send activity data to AI brain: {e}")
 
         # Backwards-compat: expose a simple 'activities' list for older tests/clients
         activity_result.setdefault('activities', [k for k, v in activity_result.get('all_scores', {}).items() if v > 0])
@@ -985,7 +985,7 @@ async def analyze_scene(file: UploadFile = File(...)):
         # Check cache first
         cached_result = get_cached_result(cache_key)
         if cached_result:
-            print(f"Using cached scene analysis result for image {image_hash}")
+            logger.debug(f"Using cached scene analysis result for image {image_hash}")
             return cached_result
 
         # Optimize image for processing
@@ -1043,7 +1043,7 @@ async def analyze_scene(file: UploadFile = File(...)):
             }
             requests.post(os.getenv('AI_BRAIN_URL', 'http://ai_brain:9004') + '/ingest/cam_scene', json=payload, timeout=2)
         except Exception as e:
-            print(f"Failed to send scene data to AI brain: {e}")
+            logger.error(f"Failed to send scene data to AI brain: {e}")
 
         return result
 
@@ -1097,7 +1097,7 @@ def analyze_scene_context(image: np.ndarray, objects: List[Dict], posture: str) 
         context['confidence'] = 0.7 if context['location_type'] != 'unknown' else 0.3
 
     except Exception as e:
-        print(f"Scene context analysis failed: {e}")
+        logger.error(f"Scene context analysis failed: {e}")
 
     return context
 
@@ -1157,7 +1157,7 @@ def cleanup_expired_cache():
         del processing_cache[key]
 
     if expired_keys:
-        print(f"Cleaned up {len(expired_keys)} expired cache entries")
+        logger.info(f"Cleaned up {len(expired_keys)} expired cache entries")
 
 
 def optimize_image_for_processing(image: np.ndarray) -> tuple:
@@ -1391,7 +1391,7 @@ class PTZController:
             if self.hardware:
                 self.pan, self.tilt, self.zoom = self.hardware.get_position()
         except Exception as e:
-            print(f"Failed to sync from hardware: {e}")
+            logger.error(f"Failed to sync from hardware: {e}")
 
     def set_position(self, pan: float, tilt: float, zoom: float):
         """Set PTZ position with limits and hardware sync"""
@@ -1409,7 +1409,7 @@ class PTZController:
                 if self.hardware:
                     self.hardware.set_pan_tilt_zoom(self.pan, self.tilt, self.zoom)
             except Exception as e:
-                print(f"Failed to set hardware position: {e}")
+                logger.error(f"Failed to set hardware position: {e}")
 
     def set_position(self, pan: float, tilt: float, zoom: float):
         """Set PTZ position with limits"""
@@ -1589,7 +1589,7 @@ def tracking_loop():
             time.sleep(0.1)  # 10 FPS tracking
 
         except Exception as e:
-            print(f"Tracking loop error: {e}")
+            logger.error(f"Tracking loop error: {e}")
             time.sleep(1)
 
 
@@ -1756,7 +1756,7 @@ async def cache_cleanup_worker():
             cleanup_expired_cache()
             await asyncio.sleep(60)  # Clean up every minute
         except Exception as e:
-            print(f"Cache cleanup error: {e}")
+            logger.error(f"Cache cleanup error: {e}")
             await asyncio.sleep(60)
 
 
@@ -2177,8 +2177,8 @@ async def analyze_activity_multi_camera():
 
 if __name__ == "__main__":
     import uvicorn
-    print("Starting Kilo AI Camera Service with optimizations...")
-    print("Features: YOLO object detection, activity classification, multi-camera support, caching, continuous learning")
+    logger.info("Starting Kilo AI Camera Service with optimizations...")
+    logger.info("Features: YOLO object detection, activity classification, multi-camera support, caching, continuous learning")
     # Use port 9007 to match K3s service configuration
     # Can be overridden via CAM_PORT environment variable
     port = int(os.getenv("CAM_PORT", "9007"))

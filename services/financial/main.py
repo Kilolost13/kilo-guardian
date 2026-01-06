@@ -14,6 +14,9 @@ import base64
 from contextlib import asynccontextmanager
 import hashlib
 from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 try:
     import PyPDF2  # optional for PDF text extraction
 except Exception:
@@ -91,11 +94,11 @@ async def lifespan(app: FastAPI):
             from financial.scripts.add_category_column_if_missing import ensure_column
             ensure_column()
         except Exception:
-            print("Warning: failed to run migration helper")
+            logger.warning("Failed to run migration helper", exc_info=True)
         try:
             UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         except Exception:
-            print("Warning: failed to create upload dir")
+            logger.warning("Failed to create upload dir", exc_info=True)
         # schedule nightly maintenance if enabled
         global _scheduler
         if ENABLE_NIGHTLY_MAINTENANCE:
@@ -112,9 +115,9 @@ async def lifespan(app: FastAPI):
                 _scheduler.add_job(_recalculate_categories_background, trigger=trigger, id='nightly_recat')
                 _scheduler.start()
                 app.state.scheduler = _scheduler
-                print("Nightly maintenance scheduler started")
+                logger.info("Nightly maintenance scheduler started")
             except Exception as e:
-                print(f"Warning: failed to start scheduler: {e}")
+                logger.warning(f"Failed to start scheduler: {e}")
     except Exception:
         pass
     yield
@@ -122,7 +125,7 @@ async def lifespan(app: FastAPI):
     try:
         if _scheduler:
             _scheduler.shutdown(wait=False)
-            print("Scheduler shut down")
+            logger.info("Scheduler shut down")
     except Exception:
         pass
 
@@ -723,7 +726,7 @@ def _recalculate_categories_background(batch_size: int = 200):
                     updated += 1
             session.commit()
             offset += batch_size
-    print(f"Recalculate categories completed: updated={updated}, total={total}")
+    logger.info(f"Recalculate categories completed: updated={updated}, total={total}")
     return {"updated": updated, "total": total}
 
 
@@ -853,7 +856,7 @@ async def _send_to_ai_brain(t: Transaction):
                 "date": t.date
             }, timeout=5)
         except Exception as e:
-            print(f"[AI_BRAIN] Failed to send transaction: {e}")
+            logger.error(f"[AI_BRAIN] Failed to send transaction: {e}")
 
 
 async def _send_receipt_to_ai_brain(text: str):
@@ -861,7 +864,7 @@ async def _send_receipt_to_ai_brain(text: str):
         try:
             await client.post("http://ai_brain:9004/ingest/receipt", json={"text": text}, timeout=5)
         except Exception as e:
-            print(f"[AI_BRAIN] Failed to send receipt: {e}")
+            logger.error(f"[AI_BRAIN] Failed to send receipt: {e}")
 
 
 async def _send_budget_to_ai(budget: Budget):
@@ -877,7 +880,7 @@ async def _send_budget_to_ai(budget: Budget):
                 timeout=5,
             )
         except Exception as e:
-            print(f"[AI_BRAIN] Failed to send budget: {e}")
+            logger.error(f"[AI_BRAIN] Failed to send budget: {e}")
 
 
 async def _send_goal_to_ai(goal: Goal):
@@ -905,7 +908,7 @@ async def _send_goal_to_ai(goal: Goal):
                 timeout=5,
             )
         except Exception as e:
-            print(f"[AI_BRAIN] Failed to send goal: {e}")
+            logger.error(f"[AI_BRAIN] Failed to send goal: {e}")
 
 
 def _parse_receipt_items(text: str):
