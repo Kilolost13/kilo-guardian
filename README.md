@@ -12,7 +12,7 @@
 
 **Kilo Guardian** is a comprehensive cognitive support system running entirely on your local infrastructure. It combines AI-powered memory management, health tracking, financial oversight, and habit formation into a unified, privacy-first platform.
 
-**Current Status:** ✅ **100% Operational** - 15 microservices running on K3s
+**Current Status:** ✅ **100% Operational** - 13 microservices + frontend running on K3s
 
 ---
 
@@ -101,10 +101,9 @@ Network: 10.42.0.0/16 (K3s Pod Network)
 
 | Service | Pod Name | Status | Function |
 |---------|----------|--------|----------|
-| Frontend | kilo-frontend | ✅ Running | React UI |
-| Gateway | kilo-gateway | ✅ Running | API Router & Auth |
+| **Frontend** | kilo-frontend | ✅ Running | React UI |
+| **Gateway** | kilo-gateway | ✅ Running | API Router & Auth |
 | Medications | kilo-meds | ✅ Running | Med tracking & OCR |
-| Medications v2 | kilo-meds-v2 | ✅ Running | Updated version |
 | Reminders | kilo-reminder | ✅ Running | Timeline & alerts |
 | Habits | kilo-habits | ✅ Running | Habit tracking |
 | AI Brain | kilo-ai-brain | ✅ Running | RAG & Memory |
@@ -115,9 +114,10 @@ Network: 10.42.0.0/16 (K3s Pod Network)
 | Voice | kilo-voice | ✅ Running | Voice input |
 | USB Transfer | kilo-usb-transfer | ✅ Running | File transfer |
 | SocketIO | kilo-socketio | ✅ Running | Real-time events |
-| Ollama | kilo-ollama | ✅ Running | Local LLM |
+| **Ollama** | kilo-ollama | ✅ Running | Local LLM |
+| Integration | kilo-integration | ✅ Running | Service integration |
 
-**Total:** 15 pods, all healthy
+**Total:** 13 microservices + 2 infrastructure components (Frontend, Ollama)
 
 ---
 
@@ -415,7 +415,7 @@ For issues or questions:
 ✅ **Networking:** All services communicating
 ✅ **Documentation:** Comprehensive guides available
 
-**System Health:** 100% - All 15 pods running
+**System Health:** 100% - All services operational
 
 ---
 

@@ -18,16 +18,20 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Kilos API Gateway")
 
 # Add CORS middleware to allow frontend access
+# Configure allowed origins via CORS_ORIGINS env var (comma-separated)
+# Default to localhost for development only
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:30000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for local development
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # admin tokens DB (simple centralized token store for admin UI/automation)
-DB_URL = os.getenv("GATEWAY_DB_URL", "sqlite:////tmp/gateway.db")
+# Use /data for persistent storage (not /tmp which is cleared on restart)
+DB_URL = os.getenv("GATEWAY_DB_URL", "sqlite:////data/gateway.db")
 engine = create_engine(DB_URL, echo=False)
 
 

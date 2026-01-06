@@ -26,7 +26,8 @@ class HabitCompletion(SQLModel, table=True):
     status: Optional[str] = None  # completed | skipped
     med_id: Optional[int] = None
 
-db_url = "sqlite:////tmp/habits.db"
+# Use /data for persistent storage (not /tmp which is cleared on restart)
+db_url = os.getenv("HABITS_DB_URL", "sqlite:////data/habits.db")
 engine = create_engine(db_url, echo=False)
 
 

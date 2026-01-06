@@ -141,9 +141,12 @@ ptz_hardware = PTZHardwareInterface()
 app = FastAPI(title="Camera Service")
 
 # Add CORS middleware to allow frontend access
+# Configure allowed origins via CORS_ORIGINS env var (comma-separated)
+# Default to localhost for development only
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:30000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for local development
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -2176,4 +2179,7 @@ if __name__ == "__main__":
     import uvicorn
     print("Starting Kilo AI Camera Service with optimizations...")
     print("Features: YOLO object detection, activity classification, multi-camera support, caching, continuous learning")
-    uvicorn.run(app, host="0.0.0.0", port=8003, log_level="info")
+    # Use port 9007 to match K3s service configuration
+    # Can be overridden via CAM_PORT environment variable
+    port = int(os.getenv("CAM_PORT", "9007"))
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")

@@ -13,9 +13,12 @@ import datetime
 app = FastAPI(title="Kilos API Gateway")
 
 # Add CORS middleware to allow frontend access
+# Configure allowed origins via CORS_ORIGINS env var (comma-separated)
+# Default to localhost for development only
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:30000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins for local development
+    allow_origins=CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
