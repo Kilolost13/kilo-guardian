@@ -137,6 +137,7 @@ spec:
       containers:
       - name: financial
         image: kilo/financial:latest
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 9005
 

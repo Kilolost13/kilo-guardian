@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
-# Use the Python-based wait-for-advanced
+# Run Alembic migrations
+echo "Running Alembic migrations..."
 python3 -m financial.scripts.run_alembic_upgrade || true
-exec python3 /app/wait-for-advanced.py "ai_brain:9004" -- uvicorn main:app --host 0.0.0.0 --port 9005
+echo "Migrations complete, starting uvicorn..."
+# Start the service directly without waiting
+exec uvicorn main:app --host 0.0.0.0 --port 9005

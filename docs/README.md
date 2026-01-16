@@ -1,52 +1,108 @@
-# AI Memory Assistant - Documentation Index
+# Kilo Guardian AI - Documentation Index
 
-Generated on: 2025-12-24 08:01:57
+**Last Updated:** January 14, 2026  
+**Status:** Production Ready (K3s Deployment)
 
 ## 📚 Documentation Overview
 
-This documentation provides comprehensive information about the AI Memory Assistant system, designed for air-gapped deployment and local operation.
+This documentation provides comprehensive information about the Kilo Guardian AI system - a personal AI assistant running on Kubernetes (K3s) with offline-capable features.
 
 ## 🚀 Quick Start
 
 ### For Users
-1. **[User Guide](user_guide.md)** - Learn how to use the AI Memory Assistant
-2. **[Deployment Guide](deployment.md)** - Get the system running locally
+1. **[Quick Start Guide](QUICK_START.md)** - Get started in 5 minutes
+2. **[User Guide](user_guide.md)** - Complete user manual
 3. **[Troubleshooting Guide](troubleshooting.md)** - Solve common issues
+4. **[Tablet Setup](TABLET_SETUP_INSTRUCTIONS.md)** - Setup for tablet interface
+
+### For Administrators
+1. **[Deployment Guide](DEPLOYMENT.md)** - Complete K3s deployment documentation
+2. **[Operations Guide](OPERATIONS.md)** - Day-to-day operations and maintenance
+3. **[K3s Access Guide](K3S_ACCESS_GUIDE.md)** - Managing K3s cluster
+4. **[Persistent Storage Setup](PERSISTENT_STORAGE_SETUP.md)** - Storage configuration
 
 ### For Developers
-1. **[Developer Guide](developer_guide.md)** - Understand the codebase and architecture
-2. **[API Documentation](api.md)** - Technical API reference
+1. **[Developer Guide](developer_guide.md)** - Architecture and development workflow
+2. **[API Documentation](API_DOCUMENTATION.md)** - Complete REST API reference
 3. **[Model Documentation](models.md)** - Data models and database schema
+4. **[Architecture Guide](ARCHITECTURE.md)** - System design and components
 
 ## 📖 Detailed Documentation
 
-### User-Focused
+### Deployment & Setup
+- **[Deployment Guide](DEPLOYMENT.md)** - Complete K3s deployment (CURRENT)
+- **[Quick Start](QUICK_START.md)** - Fast setup guide
+- **[Beelink Deployment](BEELINK_DEPLOYMENT.md)** - Deployment on Beelink hardware
+- **[Air-Gapped Setup](README_AIRGAP.md)** - Offline deployment guide
+- **[Persistent Storage](PERSISTENT_STORAGE_SETUP.md)** - Storage configuration
+
+### User Documentation
 - **[User Guide](user_guide.md)** - Complete user manual with tutorials
-- **[Troubleshooting Guide](troubleshooting.md)** - Problem-solving and diagnostics
-- **[Deployment Guide](deployment.md)** - Installation and setup instructions
+- **[Troubleshooting](troubleshooting.md)** - Problem-solving and diagnostics
+- **[Features](FEATURES.md)** - All system features and capabilities
 
-### Developer-Focused
+### Developer Documentation
 - **[Developer Guide](developer_guide.md)** - Architecture, development workflow, and best practices
-- **[API Documentation](api.md)** - REST API endpoints and usage examples
+- **[API Documentation](API_DOCUMENTATION.md)** - REST API endpoints and usage examples
 - **[Model Documentation](models.md)** - Database schema and data relationships
+- **[Architecture](ARCHITECTURE.md)** - System architecture and design
 
-### System Documentation
-- **Architecture Overview** - High-level system design
-- **Security Guidelines** - Security best practices and implementation
-- **Performance Tuning** - Optimization techniques and monitoring
+### Specialized Setup
+- **[Camera Setup](CAMERA_SETUP.md)** - Camera configuration
+- **[Multi-Camera System](MULTI_CAMERA_SYSTEM.md)** - Multiple camera setup
+- **[Fully Kiosk Setup](FULLY_KIOSK_SETUP.md)** - Kiosk mode for tablets
+- **[Tablet Setup](TABLET_SETUP_INSTRUCTIONS.md)** - Tablet interface setup
+- **[Speech/TTS Setup](README_STT_TTS.md)** - Voice features setup
+
+### Planning & Roadmaps
+- **[AI Learning Plan](AI_LEARNING_PLAN.md)** - AI feature roadmap
+- **[Integration Roadmap](ROADMAPS/INTEGRATION_ROADMAP.md)** - Integration plans
+- **[Voice Roadmap](ROADMAPS/VOICE_ROADMAP.md)** - Voice feature roadmap
+- **[System Data Flow](SYSTEM_DATA_FLOW.md)** - Data flow architecture
+
 
 ## 🛠️ Development Resources
 
-### Testing
-- Run comprehensive tests: `python3 test_suite.py`
-- Run unit tests: `python3 -m pytest tests/unit_tests.py`
-- Run CI/CD pipeline: `./local_ci.sh`
+### Testing & Quality
+- **Quality Assurance:** [QUALITY_ASSURANCE_README.md](QUALITY_ASSURANCE_README.md)
+- Run tests: Check developer guide for test commands
+- Code Style: Follow PEP 8 for Python, TypeScript for frontend
 
-### Code Quality
-- Follow PEP 8 for Python code
-- Use TypeScript for frontend development
-- Write tests for all new features
-- Update documentation for changes
+### Maintenance
+- **[Changelog](CHANGELOG.md)** - Release notes and changes
+- **[Operations Guide](OPERATIONS.md)** - Operational procedures
+
+### Historical Documentation
+- **[Archive](ARCHIVE/)** - Historical reports, old implementations, and bug fix documentation
+  - `ARCHIVE/historical-reports/` - System cleanup, restructure, and audit reports (2025-2026)
+  - `ARCHIVE/implementation-reports/` - Past feature implementation summaries
+  - `ARCHIVE/fix-reports/` - Historical bug fixes and updates
+
+---
+
+## 📝 Recent Updates
+
+**January 14, 2026:** Documentation consolidated - 40+ outdated markdown files archived. See [DOCUMENTATION_CONSOLIDATION_2026-01-14.md](DOCUMENTATION_CONSOLIDATION_2026-01-14.md) for details.
+
+---
+
+## 🔗 External Links
+
+- **GitHub Repository:** Contact administrator for access
+- **Project Presentation:** See [INVESTOR_PRESENTATION.md](INVESTOR_PRESENTATION.md)
+
+---
+
+## 📞 Support
+
+For issues, questions, or contributions:
+1. Check the [Troubleshooting Guide](troubleshooting.md)
+2. Review the [Developer Guide](developer_guide.md)
+3. See [CONTRIBUTING.md](../CONTRIBUTING.md) for contribution guidelines
+
+---
+
+*Documentation maintained by the Kilo Guardian development team*
 
 ### Local Development
 ```bash

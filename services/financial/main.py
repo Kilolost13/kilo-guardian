@@ -92,6 +92,28 @@ async def lifespan(app: FastAPI):
             ensure_column()
         except Exception:
             print("Warning: failed to run migration helper")
+        
+        # Add new bill-related columns if missing
+        try:
+            from sqlalchemy import text
+            with engine.begin() as conn:  # Use begin() for auto-commit
+                cols = conn.execute(text('PRAGMA table_info("transaction")')).fetchall()
+                col_names = {c[1] for c in cols}
+                if 'type' not in col_names:
+                    conn.execute(text('ALTER TABLE "transaction" ADD COLUMN type VARCHAR'))
+                if 'category' not in col_names:
+                    conn.execute(text('ALTER TABLE "transaction" ADD COLUMN category VARCHAR'))
+                if 'is_recurring' not in col_names:
+                    conn.execute(text('ALTER TABLE "transaction" ADD COLUMN is_recurring BOOLEAN DEFAULT 0'))
+                if 'recurrence_pattern' not in col_names:
+                    conn.execute(text('ALTER TABLE "transaction" ADD COLUMN recurrence_pattern VARCHAR'))
+                if 'due_date' not in col_names:
+                    conn.execute(text('ALTER TABLE "transaction" ADD COLUMN due_date VARCHAR'))
+                if 'bill_name' not in col_names:
+                    conn.execute(text('ALTER TABLE "transaction" ADD COLUMN bill_name VARCHAR'))
+        except Exception as e:
+            print(f"[FINANCIAL] Schema migration warning: {e}")
+        
         try:
             UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         except Exception:
@@ -149,7 +171,12 @@ def status():
     return {"status": "ok"}
 
 
-AI_BRAIN_URL = os.getenv("AI_BRAIN_URL", "http://ai_brain:9004/ingest/finance")
+AI_BRAIN_URL = os.getenv("AI_BRAIN_URL", "http://kilo-ai-brain:9004/ingest/finance")
+AI_EVENT_URL = os.getenv("AI_EVENT_URL", "http://kilo-ai-brain:9004/ingest/event")
+REMINDER_BASE = os.getenv("REMINDER_URL", "http://kilo-reminder:9002")
+REMINDER_SERIES_URL = os.getenv("REMINDER_SERIES_URL", f"{REMINDER_BASE.rstrip('/')}/reminders")
+HABITS_BASE = os.getenv("HABITS_URL", "http://kilo-habits:9000")
+HABITS_ADD_URL = os.getenv("HABITS_ADD_URL", f"{HABITS_BASE.rstrip('/')}")
 # Note: admin credentials are read at call-time to allow tests to set env vars after import
 
 
@@ -300,12 +327,14 @@ def add_transaction(t: Transaction, background_tasks: BackgroundTasks = None):
         session.add(t)
         session.commit()
         session.refresh(t)
-    # Send to ai_brain
+    # Send to ai_brain and fan out to other services
     if background_tasks:
         background_tasks.add_task(_send_to_ai_brain, t)
+        background_tasks.add_task(_fan_out_bill, t)
     else:
         import asyncio
         asyncio.create_task(_send_to_ai_brain(t))
+        asyncio.create_task(_fan_out_bill(t))
     return t
 
 
@@ -366,11 +395,24 @@ def get_budgets():
         out = []
         for b in budgets:
             # Sum expenses for this category in the current month
-            spent = sum(
-                abs(safe_number(t.amount))
-                for t in transactions
-                if t.category == b.category and safe_number(t.amount) < 0 and t.date.startswith(current_month)
-            )
+            # Note: Transaction doesn't have category field, derive it from description/items
+            spent = 0.0
+            for t in transactions:
+                if safe_number(t.amount) < 0 and t.date.startswith(current_month):
+                    # Get category from receipt items or categorize description
+                    items = session.exec(select(ReceiptItem).where(ReceiptItem.transaction_id == t.id)).all()
+                    if items:
+                        cat_counts = {}
+                        for it in items:
+                            cat = (it.category or "uncategorized").lower()
+                            cat_counts[cat] = cat_counts.get(cat, 0) + 1
+                        trans_category = max(cat_counts, key=cat_counts.get)
+                    else:
+                        trans_category = _categorize_item(t.description or "")
+                    
+                    if trans_category.lower() == b.category.lower():
+                        spent += abs(safe_number(t.amount))
+            
             monthly_limit = safe_number(b.monthly_limit)
             percentage = (spent / monthly_limit * 100) if monthly_limit > 0 else 0
             d = b.dict()
@@ -625,6 +667,11 @@ def ingest_document(file: UploadFile = File(...), kind: str = "auto", background
             ingest_transactions_total.labels("receipt").inc(len(transactions_created))
         else:
             txs = _parse_statement_transactions(text)
+            
+            # Use AI Brain to verify and enhance parsed transactions
+            if background_tasks:
+                background_tasks.add_task(_verify_transactions_with_ai, txs, text[:5000])
+            
             with Session(engine) as session:
                 for tx in txs:
                     txn = Transaction(
@@ -800,6 +847,84 @@ def get_spending_analytics():
         }
 
 
+@app.get("/spending/ai_insights")
+async def get_ai_spending_insights():
+    """Get AI-powered spending insights and recommendations from the AI Brain"""
+    with Session(engine) as session:
+        transactions = session.exec(select(Transaction)).all()
+        budgets = session.exec(select(Budget)).all()
+        
+        if not transactions:
+            return {
+                "ai_insights": ["No transaction data available yet. Start tracking your spending!"],
+                "recommendations": []
+            }
+        
+        # Prepare data for AI Brain
+        spending_summary = {
+            "total_transactions": len(transactions),
+            "transactions": [
+                {
+                    "amount": t.amount,
+                    "description": t.description,
+                    "date": t.date,
+                    "category": getattr(t, 'category', None),
+                    "type": getattr(t, 'type', None)
+                }
+                for t in transactions[-50:]  # Last 50 transactions
+            ],
+            "budgets": [
+                {"category": b.category, "limit": b.monthly_limit}
+                for b in budgets
+            ]
+        }
+        
+        # Request AI insights
+        async with httpx.AsyncClient() as client:
+            try:
+                resp = await client.post(
+                    "http://kilo-ai-brain:9004/analyze/spending",
+                    json=spending_summary,
+                    timeout=10
+                )
+                if resp.status_code == 200:
+                    return resp.json()
+                else:
+                    print(f"[AI_INSIGHTS] Got {resp.status_code} from AI Brain")
+            except Exception as e:
+                print(f"[AI_INSIGHTS] Failed to get AI insights: {e}")
+        
+        # Fallback: Basic rule-based insights
+        category_totals = {}
+        for t in transactions:
+            cat = getattr(t, 'category', 'uncategorized') or 'uncategorized'
+            if t.amount < 0:  # expenses only
+                category_totals[cat] = category_totals.get(cat, 0) + abs(t.amount)
+        
+        insights = []
+        recommendations = []
+        
+        # Check budget overruns
+        for budget in budgets:
+            spent = category_totals.get(budget.category, 0)
+            if spent > budget.monthly_limit:
+                overage = spent - budget.monthly_limit
+                insights.append(f"⚠️ Over budget in {budget.category} by ${overage:.2f}")
+                recommendations.append(f"Consider reducing {budget.category} spending or adjusting your budget")
+            elif spent > budget.monthly_limit * 0.8:
+                insights.append(f"⚡ Approaching budget limit in {budget.category} ({spent/budget.monthly_limit*100:.0f}% used)")
+        
+        if not insights:
+            insights.append("✅ All spending within budget limits")
+            recommendations.append("Keep up the good financial habits!")
+        
+        return {
+            "ai_insights": insights,
+            "recommendations": recommendations,
+            "category_totals": category_totals
+        }
+
+
 @app.post("/admin/recalculate_categories")
 def recalculate_categories(request: Request, background_tasks: BackgroundTasks):
     """Trigger re-categorization. Requires ADMIN_TOKEN header when ADMIN_TOKEN is set.
@@ -930,10 +1055,25 @@ def _parse_statement_transactions(text: str) -> List[Dict[str, object]]:
     txs: List[Dict[str, object]] = []
     today = datetime.datetime.utcnow().date()
 
+    # Try to infer statement period end month/year from header
+    end_month = today.month
+    end_year = today.year
+    mper = re.search(r"Statement\s+Period\s+(\d{1,2})/(\d{1,2})/(\d{2,4})\s*-\s*(\d{1,2})/(\d{1,2})/(\d{2,4})", text, re.IGNORECASE)
+    if mper:
+        try:
+            end_month = int(mper.group(4))
+            end_year = int(mper.group(6))
+            if end_year < 100:
+                end_year += 2000
+        except Exception:
+            pass
+
     # More flexible patterns for various statement formats
-    patterns = [
+    patterns = [ 
         # ISO date: 2024-01-15 Description $123.45
         re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<desc>.+?)\s+(?P<amount>[()\-\+$€£]?\s*\d+[.,]\d{2})"),
+        # Bank statement format: 12-01 POS Debit- Description ... 16.09 2,857.63 -
+        re.compile(r"(?P<date>\d{1,2}-\d{1,2})\s+(?P<desc>POS\s+[^\d]+?)\s+(?P<amount>\d+[.,]\d{2})"),
         # US date: 01/15/2024 Description $123.45
         re.compile(r"(?P<date>\d{1,2}/\d{1,2}/\d{2,4})\s+(?P<desc>.+?)\s+(?P<amount>[()\-\+$€£]?\s*\d+[.,]\d{2})"),
         # UK date: 15/01/2024 Description £123.45
@@ -946,6 +1086,7 @@ def _parse_statement_transactions(text: str) -> List[Dict[str, object]]:
 
     # Look for any line with a money amount
     money_pattern = re.compile(r"[()\-\+$€£]?\s*\d+[.,]\d{2}")
+    money_pattern = re.compile(r"[()\-\+$€£]?\s*(?:\d{1,3}(?:,\d{3})+|\d+)[.,]\d{2}")
 
     def _normalize_date(ds: Optional[str]) -> str:
         if not ds:
@@ -969,7 +1110,18 @@ def _parse_statement_transactions(text: str) -> List[Dict[str, object]]:
                         return datetime.date(int(y), int(m), int(d)).isoformat()
             elif "-" in ds:
                 parts = ds.split("-")
-                if len(parts) == 3:
+                if len(parts) == 2:
+                    # MM-DD format without year - infer from statement period end
+                    m, d = parts
+                    year = end_year
+                    try:
+                        # If month rolls past the end month (e.g., m=01, end_month=12), assume previous year
+                        if int(m) > end_month:
+                            year -= 1
+                    except Exception:
+                        pass
+                    return datetime.date(year, int(m), int(d)).isoformat()
+                elif len(parts) == 3:
                     # Try YYYY-MM-DD
                     if len(parts[0]) == 4:
                         return datetime.date.fromisoformat(ds).isoformat()
@@ -982,16 +1134,43 @@ def _parse_statement_transactions(text: str) -> List[Dict[str, object]]:
         except Exception:
             return today.isoformat()
 
-    for line in lines:
-        # Skip header/footer lines
-        if len(line) < 10 or any(keyword in line.lower() for keyword in [
-            'page', 'statement', 'balance', 'total', 'account', 'beginning', 'ending', 'summary'
+    def _clean_desc(s: str) -> str:
+        d = s.strip()
+        # Normalize common noise tokens
+        d = re.sub(r"\bTransaction\b", " ", d, flags=re.IGNORECASE)
+        # Collapse multiple spaces and separators
+        d = re.sub(r"\s{2,}", " ", d)
+        d = re.sub(r"\s-\s", " - ", d)
+        # Simplify card text
+        d = re.sub(r"\b(POS)\s*Debit-?\s*Debit\s*Card\s*\d{3,4}\b", r"\1", d, flags=re.IGNORECASE)
+        d = re.sub(r"\bDebit\s*Card\s*\d{3,4}\b", "Debit Card", d, flags=re.IGNORECASE)
+        # Trim leftover separators
+        d = d.strip("- ")
+        return d.strip()
+
+    for idx, line in enumerate(lines):
+        # Skip header/footer lines (but NOT transaction lines)
+        if len(line) < 10:
+            continue
+        # Skip only obvious header lines, not transaction descriptions
+        if any(keyword in line.lower() for keyword in [
+            'statement period', 'routing number', 'questions about', 'account number',
+            'previous balance', 'ending balance', 'page 1 of', 'page 2 of', 'page 3 of',
+            'summary of your', 'deposit voucher', 'totals', 'ytd balance', 'available balance'
         ]):
             continue
-        
-        # Only process lines with money amounts
-        if not money_pattern.search(line):
+        # Skip account summary table lines: start with long account numbers or contain multiple money tokens
+        money_tokens = re.findall(money_pattern, line)
+        has_date_token = bool(re.search(r"\b\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?\b|\b\d{4}-\d{2}-\d{2}\b", line))
+        # If there are multiple monetary values and no date, it's very likely a summary/balance line
+        if (re.match(r"^\d{6,}\b", line) and len(money_tokens) >= 1 and not has_date_token) or (len(money_tokens) >= 2 and not has_date_token):
+            # Lines like "7065345196 $508.32 - $4,680.26 ..." are balance summaries, not transactions
             continue
+        # Also skip lines that look like balance columns regardless of date if they contain 3+ money tokens
+        if len(money_tokens) >= 3:
+            continue
+        
+        # Do not require amounts on the same line; some statements split amount to next line
 
         matched = None
         for pat in patterns:
@@ -1001,23 +1180,94 @@ def _parse_statement_transactions(text: str) -> List[Dict[str, object]]:
                 break
         
         if not matched:
+            # Fallback: date + desc on this line, amount on next one or two lines
+            dm = re.match(r"^(?P<date>\d{1,2}[-/]\d{1,2}(?:[-/]\d{2,4})?)\s+(?P<desc>.+)$", line)
+            if dm:
+                gd = dm.groupdict()
+                desc = _clean_desc(gd.get("desc", "Transaction").strip())
+                # Skip nonsense descriptions (only punctuation or dashes)
+                if len(desc) < 3 or re.fullmatch(r"[-–—]+", desc):
+                    continue
+                date_token = gd.get("date")
+                amt_raw = None
+                # search next two lines for the first money value
+                for j in range(1, 3):
+                    k = idx + j
+                    if k < len(lines):
+                        next_line = lines[k]
+                        # skip summary/balance-looking next lines
+                        if re.match(r"^\d{6,}\b", next_line):
+                            continue
+                        if any(kw in next_line.lower() for kw in ['balance', 'totals', 'ending balance', 'previous balance']):
+                            continue
+                        tokens = re.findall(money_pattern, next_line)
+                        if len(tokens) == 1:
+                            amt_raw = tokens[0].strip()
+                            break
+                if not amt_raw:
+                    continue
+                # Handle parentheses negatives and signs + keyword heuristics
+                lowd = desc.lower()
+                negative_markers = ['pos', 'debit', 'withdrawal', 'paid to', 'transfer to', 'fee', 'pmt', 'payment']
+                positive_markers = ['deposit', 'transfer from', 'dividend', 'rebate', 'credit adjustment']
+                is_negative = (amt_raw.startswith("(") and amt_raw.endswith(")")) or any(k in lowd for k in negative_markers)
+                is_positive = any(k in lowd for k in positive_markers)
+                amt_clean = re.sub(r"[()$€£\s]", "", amt_raw)
+                try:
+                    amt = _normalize_price(amt_clean)
+                    if is_negative and not is_positive:
+                        amt = -abs(amt)
+                except:
+                    continue
+                date_str = _normalize_date(date_token)
+                if len(desc) >= 3 and not desc.isdigit():
+                    txs.append({
+                        "description": desc.strip()[:100],
+                        "amount": float(amt),
+                        "date": date_str,
+                        "category": _categorize_item(desc),
+                    })
+                continue
+            # Also try compact summary sequences like: 12-01 POS 1.99 12-01 POS 2.95 ... on one line
+            for mm in re.finditer(r"(\d{1,2}-\d{1,2})\s+([A-Z][A-Za-z]+)\s+(\d+[.,]\d{2})", line):
+                try:
+                    ds = _normalize_date(mm.group(1))
+                    desc2 = mm.group(2).strip()
+                    amt2 = _normalize_price(mm.group(3))
+                    # Heuristics for sign based on description keyword
+                    lowd2 = desc2.lower()
+                    if any(k in lowd2 for k in ['pos', 'debit', 'withdrawal', 'paid to', 'transfer to', 'fee', 'pmt', 'payment']):
+                        amt2 = -abs(amt2)
+                    elif any(k in lowd2 for k in ['deposit', 'transfer from', 'dividend', 'rebate', 'credit adjustment']):
+                        amt2 = abs(amt2)
+                    txs.append({
+                        "description": desc2,
+                        "amount": float(amt2),
+                        "date": ds,
+                        "category": _categorize_item(desc2),
+                    })
+                except Exception:
+                    continue
             continue
             
         gd = matched.groupdict()
-        desc = gd.get("desc", "Transaction").strip()
+        desc = _clean_desc(gd.get("desc", "Transaction").strip())
         amt_raw = gd.get("amount", "0").strip()
         
         # Skip if description is too short or just numbers
         if len(desc) < 3 or desc.isdigit():
             continue
         
-        # Handle parentheses negatives and signs
-        is_negative = amt_raw.startswith("(") and amt_raw.endswith(")")
+        # Handle parentheses negatives and signs + keyword heuristics
+        lowd = desc.lower()
+        negative_markers = ['pos', 'debit', 'withdrawal', 'paid to', 'transfer to', 'fee', 'pmt', 'payment']
+        positive_markers = ['deposit', 'transfer from', 'dividend', 'rebate', 'credit adjustment']
+        is_negative = (amt_raw.startswith("(") and amt_raw.endswith(")")) or any(k in lowd for k in negative_markers)
         amt_raw = re.sub(r"[()$€£\s]", "", amt_raw)
         
         try:
             amt = _normalize_price(amt_raw)
-            if is_negative:
+            if is_negative and not any(k in lowd for k in positive_markers):
                 amt = -abs(amt)
         except:
             continue
@@ -1051,10 +1301,76 @@ async def _send_to_ai_brain(t: Transaction):
             await client.post(AI_BRAIN_URL, json={
                 "amount": t.amount,
                 "description": t.description,
-                "date": t.date
+                "date": t.date,
+                "type": t.type,
+                "category": t.category,
+                "is_recurring": t.is_recurring,
+                "bill_name": t.bill_name
             }, timeout=5)
         except Exception as e:
             print(f"[AI_BRAIN] Failed to send transaction: {e}")
+
+
+async def _post_json_with_retry(url: str, payload: dict, tag: str = "FINANCIAL"):
+    """Best-effort POST with retry logic."""
+    async with httpx.AsyncClient() as client:
+        for attempt in range(3):
+            try:
+                resp = await client.post(url, json=payload, timeout=5)
+                if resp.status_code < 300:
+                    print(f"[{tag}] Success to {url}")
+                    return resp
+                print(f"[{tag}] Got {resp.status_code} from {url}, attempt {attempt+1}")
+            except Exception as e:
+                print(f"[{tag}] Failed to POST to {url}: {e}, attempt {attempt+1}")
+    print(f"[{tag}] Gave up after 3 attempts to {url}")
+    return None
+
+
+async def _fan_out_bill(transaction: Transaction):
+    """Notify reminder, habits, and AI Brain about a recurring bill (best-effort)."""
+    if not transaction.is_recurring or not transaction.due_date:
+        return  # Only fan out for recurring bills with due dates
+    
+    bill_name = transaction.bill_name or transaction.description
+    
+    # Convert recurrence_pattern to reminder format
+    recurrence_map = {
+        'monthly': 'monthly',
+        'weekly': 'weekly', 
+        'yearly': 'yearly',
+        'daily': 'daily'
+    }
+    recurrence = recurrence_map.get(transaction.recurrence_pattern, 'monthly')
+    
+    # Reminders: create recurring reminder for due date at 9 AM
+    reminder_when = f"{transaction.due_date}T09:00:00"
+    await _post_json_with_retry(REMINDER_SERIES_URL, {
+        "title": f"Pay {bill_name}",
+        "description": f"${abs(transaction.amount):.2f} - {transaction.category}",
+        "reminder_time": reminder_when,
+        "recurring": True
+    }, tag="FINANCIAL->REMINDER")
+    
+    # Habits: create habit for bill payment tracking
+    await _post_json_with_retry(HABITS_ADD_URL, {
+        "name": f"Pay {bill_name}",
+        "frequency": recurrence,
+        "target_count": 1,
+        "active": True
+    }, tag="FINANCIAL->HABITS")
+    
+    # AI Brain finance ingest (not event - that endpoint doesn't exist)
+    await _post_json_with_retry(AI_BRAIN_URL, {
+        "amount": transaction.amount,
+        "description": f"Bill: {bill_name}",
+        "date": transaction.date,
+        "type": "bill",
+        "category": transaction.category,
+        "is_recurring": True,
+        "recurrence": recurrence,
+        "due_date": transaction.due_date
+    }, tag="FINANCIAL->AI")
 
 
 async def _send_receipt_to_ai_brain(text: str):
@@ -1063,6 +1379,28 @@ async def _send_receipt_to_ai_brain(text: str):
             await client.post("http://ai_brain:9004/ingest/receipt", json={"text": text}, timeout=5)
         except Exception as e:
             print(f"[AI_BRAIN] Failed to send receipt: {e}")
+
+
+async def _verify_transactions_with_ai(transactions: List[Dict], raw_text: str):
+    """Send parsed transactions to AI Brain for verification and enhancement"""
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.post(
+                "http://ai_brain:9004/analyze/financial-document",
+                json={
+                    "transactions": transactions,
+                    "raw_text": raw_text,
+                    "task": "verify_and_enhance"
+                },
+                timeout=10
+            )
+            if response.status_code == 200:
+                result = response.json()
+                print(f"[AI Brain] Verified {len(transactions)} transactions, confidence: {result.get('confidence', 'N/A')}")
+                if result.get('suggestions'):
+                    print(f"[AI Brain] Suggestions: {result['suggestions']}")
+        except Exception as e:
+            print(f"[AI Brain] Verification failed (non-critical): {e}")
 
 
 async def _send_budget_to_ai(budget: Budget):

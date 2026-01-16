@@ -7,7 +7,9 @@ from alembic import command
 import os
 
 def run_upgrade():
-    cfg = Config(os.path.join(os.path.dirname(__file__), '..', '..', 'alembic.ini'))
+    # Look for alembic.ini in the financial service root directory
+    alembic_ini_path = os.path.join(os.path.dirname(__file__), '..', 'alembic.ini')
+    cfg = Config(alembic_ini_path)
     # allow overriding DB URL via env
     db = os.getenv('DATABASE_URL')
     if db:

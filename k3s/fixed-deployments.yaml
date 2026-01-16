@@ -146,7 +146,7 @@ spec:
     spec:
       containers:
       - name: financial
-        image: kilo/financial:latest
+        image: docker.io/library/kilo-financial:latest
         imagePullPolicy: Never
         ports:
         - containerPort: 9005

@@ -123,19 +123,20 @@ const Finance: React.FC = () => {
       const [transactionsRes, summaryRes, budgetsRes, goalsRes] = await Promise.all([
         api.get('/financial/transactions'),
         api.get('/financial/summary'),
-        api.get('/financial/budgets').catch(() => ({ data: { budgets: [] } })),
-        api.get('/financial/goals').catch(() => ({ data: { goals: [] } }))
+        api.get('/financial/budgets').catch(() => ({ data: [] })),
+        api.get('/financial/goals').catch(() => ({ data: [] }))
       ]);
 
-      setTransactions(transactionsRes.data.transactions || []);
+      // Backend returns arrays directly, not wrapped objects
+      setTransactions(Array.isArray(transactionsRes.data) ? transactionsRes.data : (transactionsRes.data.transactions || []));
       setSummary(summaryRes.data || {
         total_income: 0,
         total_expenses: 0,
         balance: 0,
         transactions_count: 0
       });
-      setBudgets(budgetsRes.data.budgets || []);
-      setGoals(goalsRes.data.goals || []);
+      setBudgets(Array.isArray(budgetsRes.data) ? budgetsRes.data : (budgetsRes.data.budgets || []));
+      setGoals(Array.isArray(goalsRes.data) ? goalsRes.data : (goalsRes.data.goals || []));
     } catch (error) {
       console.error('Failed to fetch financial data:', error);
       setTransactions([]);
@@ -1043,9 +1044,9 @@ const Finance: React.FC = () => {
           )}
         </div>
 
-        {/* Transactions List */}
+        {/* Transactions List - Spreadsheet Format */}
         <div className="mb-2">
-          <h2 className="text-base font-semibold text-zombie-green terminal-glow mb-2">💳 RECENT TRANSACTIONS</h2>
+          <h2 className="text-base font-semibold text-zombie-green terminal-glow mb-2">💳 TRANSACTIONS</h2>
         </div>
         {loading ? (
           <div className="text-center py-4 text-zombie-green text-sm">Loading transactions...</div>
@@ -1056,46 +1057,62 @@ const Finance: React.FC = () => {
             </p>
           </Card>
         ) : (
-          <div className="space-y-2">
-            {transactions.map((transaction) => (
-              <Card key={transaction.id} className="py-2 px-3">
-                <div className="flex items-center justify-between">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
+          <Card className="mb-2 py-2 px-2 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b-2 border-zombie-green">
+                  <th className="px-2 py-2 text-left text-zombie-green font-bold">Type</th>
+                  <th className="px-2 py-2 text-left text-zombie-green font-bold">Description</th>
+                  <th className="px-2 py-2 text-left text-zombie-green font-bold">Category</th>
+                  <th className="px-2 py-2 text-left text-zombie-green font-bold">Date</th>
+                  <th className="px-2 py-2 text-right text-zombie-green font-bold">Amount</th>
+                  <th className="px-2 py-2 text-center text-zombie-green font-bold">Action</th>
+                </tr>
+              </thead>
+              <tbody>
+                {transactions.map((transaction, idx) => (
+                  <tr 
+                    key={transaction.id} 
+                    className={`border-b border-zombie-green/30 hover:bg-zombie-dark/50 ${
+                      idx % 2 === 0 ? 'bg-zombie-dark/20' : ''
+                    }`}
+                  >
+                    <td className="px-2 py-2 text-center">
                       <span className="text-lg">
                         {transaction.transaction_type === 'income' ? '💵' : '💸'}
                       </span>
-                      <div className="flex-1 min-w-0">
-                        <h3 className="font-bold text-zombie-green text-sm">{transaction.description}</h3>
-                        <div className="flex items-center gap-2 text-xs text-zombie-green">
-                          <span className="px-1 py-0.5 bg-zombie-dark rounded">
-                            {transaction.category}
-                          </span>
-                          <span>{formatDate(transaction.date)}</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <span className={`text-sm font-bold ${
+                    </td>
+                    <td className="px-2 py-2 text-zombie-green font-semibold truncate">
+                      {transaction.description}
+                    </td>
+                    <td className="px-2 py-2">
+                      <span className="px-2 py-1 bg-zombie-dark text-zombie-green text-xs rounded capitalize">
+                        {transaction.category}
+                      </span>
+                    </td>
+                    <td className="px-2 py-2 text-zombie-green text-xs">
+                      {formatDate(transaction.date)}
+                    </td>
+                    <td className={`px-2 py-2 text-right font-bold ${
                       transaction.transaction_type === 'income' ? 'text-green-400' : 'text-red-400'
                     }`}>
                       {transaction.transaction_type === 'income' ? '+' : '-'}
                       {formatCurrency(Math.abs(transaction.amount))}
-                    </span>
-                    <button
-                      onClick={() => handleDeleteTransaction(transaction.id)}
-                      className="text-red-500 hover:text-red-700 text-lg"
-                      title="Delete transaction"
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
+                    </td>
+                    <td className="px-2 py-2 text-center">
+                      <button
+                        onClick={() => handleDeleteTransaction(transaction.id)}
+                        className="text-red-500 hover:text-red-700 font-bold text-lg hover:bg-red-500/20 px-2 py-1 rounded"
+                        title="Delete transaction"
+                      >
+                        ×
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Card>
         )}
       </div>
     </div>

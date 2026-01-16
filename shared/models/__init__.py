@@ -8,6 +8,13 @@ class Transaction(SQLModel, table=True):
     description: str
     date: str
     source: Optional[str] = None  # e.g., 'manual', 'ocr'
+    type: Optional[str] = None  # 'income', 'expense', 'bill'
+    category: Optional[str] = None  # e.g., 'utilities', 'groceries'
+    # Bill-specific fields
+    is_recurring: bool = False
+    recurrence_pattern: Optional[str] = None  # 'monthly', 'weekly', 'yearly'
+    due_date: Optional[str] = None  # ISO date for next due date
+    bill_name: Optional[str] = None  # Clean name for the bill
 
 
 class ReceiptItem(SQLModel, table=True):
