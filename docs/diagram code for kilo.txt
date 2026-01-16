@@ -1,0 +1,60 @@
+graph TD
+    %% Global System Root
+    Root((Kilo Guardian v1.0))
+
+    %% Infrastructure Subgraph
+    subgraph Infrastructure ["System & Env"]
+        HW[Beelink SER7-9 / Radeon 780M]
+        OS[Pop!_OS / Linux 6.17.4]
+        Env["ALLOW_NETWORK=false (Air-Gapped)"]
+        Key["LIBRARY_ADMIN_KEY Required"]
+    end
+
+    %% Microservices Subgraph
+    subgraph Services ["Microservices (13 Containers)"]
+        direction TB
+        
+        subgraph Access ["Access Layer"]
+            FE[kilo_frontend]
+            GW[kilo_gateway]
+        end
+
+        subgraph Intel ["Intelligence"]
+            Brain[kilo_ai_brain]
+            Ollama[kilo_ollama / llama3.1:8b]
+            ML[kilo_ml_engine]
+        end
+
+        subgraph Data ["Data & Life"]
+            Lib[kilo_library_of_truth]
+            Meds[kilo_meds]
+            Fin[kilo_financial]
+            Habits[kilo_habits]
+            Rem[kilo_reminder]
+        end
+
+        subgraph IO ["I/O & Tools"]
+            Voice[kilo_voice]
+            Cam[kilo_cam]
+            USB[kilo_usb_transfer]
+        end
+    end
+
+    %% Recent Fixes & Connections
+    FE -- "proxy_pass (Nginx Fix)" --> GW
+    Root --- HW
+    Root --- Services
+    
+    %% Tasks / Status
+    subgraph Progress ["Session Progress: 2025-12-28"]
+        Fix1[Fixed Docker Container Suffixes]
+        Fix2[Nginx Host Routing Fixed]
+        Task1[PENDING: Admin.tsx & Dashboard.tsx]
+        Task2[TODO: Voice Roadmap Implementation]
+    end
+
+    %% Styling
+    style Root fill:#f96,stroke:#333,stroke-width:4px
+    style Progress fill:#fff4dd,stroke:#d4a017
+    style FE stroke:#00ff00,stroke-width:2px
+    style GW stroke:#00ff00,stroke-width:2px

@@ -119,11 +119,11 @@ Kilo's Response:"""
 
 def _generate_ollama_response(prompt: str, model: Optional[str] = None) -> str:
     """
-    Generate response using Ollama HTTP API.
+    Generate response using Ollama HTTP API or OpenAI-compatible API (llama.cpp server).
     
     Args:
         prompt: Full prompt with context
-        model: Ollama model name
+        model: Model name
     
     Returns:
         Generated response text
@@ -135,36 +135,58 @@ def _generate_ollama_response(prompt: str, model: Optional[str] = None) -> str:
         model = os.environ.get("OLLAMA_MODEL", "tinyllama")
     
     try:
-        logger.info(f"Calling Ollama API at {ollama_url} with model: {model}")
+        logger.info(f"Calling LLM API at {ollama_url} with model: {model}")
         
-        # Ollama API expects JSON payload
-        payload = {
+        # Try OpenAI-compatible endpoint first (llama.cpp server)
+        openai_payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 500,
+            "temperature": 0.7
+        }
+        
+        response = httpx.post(
+            f"{ollama_url}/v1/chat/completions",
+            json=openai_payload,
+            timeout=180
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            response_text = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+            if response_text:
+                logger.info("OpenAI-compatible response generated successfully")
+                return response_text
+        
+        # Fallback to Ollama native API
+        logger.info("OpenAI endpoint failed, trying Ollama native API")
+        ollama_payload = {
             "model": model,
             "prompt": prompt,
-            "stream": False  # Get complete response at once
+            "stream": False
         }
         
         response = httpx.post(
             f"{ollama_url}/api/generate",
-            json=payload,
+            json=ollama_payload,
             timeout=180
         )
         
         if response.status_code == 200:
             result = response.json()
             response_text = result.get("response", "").strip()
-            logger.info("Ollama response generated successfully")
+            logger.info("Ollama native response generated successfully")
             return response_text
         else:
             error_msg = response.text
-            logger.error(f"Ollama API error: {response.status_code} - {error_msg}")
-            return f"(Ollama API error: {response.status_code})"
+            logger.error(f"LLM API error: {response.status_code} - {error_msg}")
+            return f"(LLM API error: {response.status_code})"
             
     except httpx.TimeoutException:
-        logger.error("Ollama request timed out")
-        return "(Response generation timed out. Try a faster model like tinyllama.)"
+        logger.error("LLM request timed out")
+        return "(Response generation timed out. Try a faster model.)"
     except Exception as e:
-        logger.error(f"Ollama API call failed: {e}")
+        logger.error(f"LLM API call failed: {e}")
         return f"(Error generating response: {e})"
 
 

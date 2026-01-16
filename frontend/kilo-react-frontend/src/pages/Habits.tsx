@@ -242,7 +242,7 @@ const Habits: React.FC = () => {
     <div className="min-h-screen zombie-gradient p-2">
       <div className="flex justify-between items-center mb-2">
         <h1 className="text-xl font-bold text-zombie-green terminal-glow">✓ HABITS</h1>
-        <Button onClick={() => navigate('/tablet')} variant="secondary" size="sm">
+        <Button onClick={() => navigate('/dashboard')} variant="secondary" size="sm">
           ← BACK
         </Button>
       </div>

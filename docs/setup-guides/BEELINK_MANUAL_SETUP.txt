@@ -1,0 +1,70 @@
+BEELINK WIFI ROUTING - MANUAL SETUP
+====================================
+
+Since the SSH password is stored encrypted, here are the commands
+to run DIRECTLY on the Beelink (no SSH from HP server needed).
+
+HOW TO ACCESS BEELINK:
+----------------------
+Option 1: SSH from your tablet (if you know password)
+   ssh kilo@192.168.43.1
+
+Option 2: Connect monitor/keyboard to Beelink directly
+   Login at console
+
+Option 3: SSH from another device that knows the password
+
+COMMANDS TO RUN ON BEELINK:
+---------------------------
+
+# 1. Enable IP forwarding
+sudo sysctl -w net.ipv4.ip_forward=1
+echo "net.ipv4.ip_forward=1" | sudo tee -a /etc/sysctl.conf
+
+# 2. Clear any existing firewall rules
+sudo iptables -F FORWARD
+sudo iptables -t nat -F POSTROUTING
+
+# 3. Set default policy to DROP (block everything)
+sudo iptables -P FORWARD DROP
+
+# 4. Allow ONLY ports 30000 and 30800 to HP server
+sudo iptables -A FORWARD -s 192.168.43.0/24 -d 192.168.68.61 -p tcp --dport 30000 -j ACCEPT
+sudo iptables -A FORWARD -s 192.168.43.0/24 -d 192.168.68.61 -p tcp --dport 30800 -j ACCEPT
+
+# 5. Allow return traffic
+sudo iptables -A FORWARD -m state --state ESTABLISHED,RELATED -j ACCEPT
+
+# 6. Set up NAT
+MAIN_IF=$(ip route | grep "192.168.68.0/24" | awk '{print $3}' | head -1)
+sudo iptables -t nat -A POSTROUTING -s 192.168.43.0/24 -d 192.168.68.61 -p tcp -m multiport --dports 30000,30800 -o $MAIN_IF -j MASQUERADE
+
+# 7. Save the rules
+sudo apt install -y iptables-persistent
+sudo netfilter-persistent save
+
+# 8. Verify setup
+echo "IP Forwarding: $(cat /proc/sys/net/ipv4/ip_forward)"
+sudo iptables -L FORWARD -n
+
+WHAT THIS DOES:
+---------------
+✅ Tablet (on Beelink WiFi) can access http://192.168.68.61:30000
+✅ Tablet can access http://192.168.68.61:30800
+🚫 Tablet CANNOT access anything else (secure!)
+
+TESTING FROM TABLET:
+--------------------
+After running commands, from tablet:
+1. Open browser to: http://192.168.68.61:30000
+2. Should load Kilo Guardian frontend
+3. Try accessing other ports - they should be blocked
+
+TROUBLESHOOTING:
+----------------
+If it doesn't work:
+- Check IP forwarding: cat /proc/sys/net/ipv4/ip_forward (should be 1)
+- Check firewall: sudo iptables -L FORWARD -n
+- Verify Beelink can reach HP: ping 192.168.68.61
+
+Last updated: January 15, 2026

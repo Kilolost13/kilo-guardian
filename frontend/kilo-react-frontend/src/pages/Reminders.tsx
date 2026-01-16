@@ -79,7 +79,7 @@ const Reminders: React.FC = () => {
           <div className="flex items-center gap-2">
             <Button
               variant="secondary"
-              onClick={() => navigate('/tablet')}
+              onClick={() => navigate('/dashboard')}
               size="sm"
             >
               ← BACK

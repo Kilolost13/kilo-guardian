@@ -1,0 +1,492 @@
+# MASTER Kilo Guardian Deployments
+# This is the authoritative source for all kilo-guardian deployments
+# Last updated: 2026-01-15
+# 
+# IMPORTANT FIXES APPLIED:
+# - All imagePullPolicy set to "IfNotPresent" (local images)
+# - All readiness probes use correct ports (9000 for most services)
+# - Gateway/habits/meds/cam have DNS-corrected wait scripts (kilo-ai-brain, not ai_brain)
+# - Replicas set to 1 (no HPAs)
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-ai-brain
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-ai-brain
+  template:
+    metadata:
+      labels:
+        app: kilo-ai-brain
+    spec:
+      containers:
+      - name: ai-brain
+        image: kilo/ai_brain:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9004
+        envFrom:
+        - configMapRef: {name: kilo-config}
+        readinessProbe:
+          httpGet: {path: /health, port: 9004}
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 9004}
+          initialDelaySeconds: 20
+          periodSeconds: 20
+        resources:
+          requests: {cpu: "100m", memory: "256Mi"}
+          limits: {cpu: "1000m", memory: "1Gi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-gateway
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-gateway
+  template:
+    metadata:
+      labels:
+        app: kilo-gateway
+    spec:
+      containers:
+      - name: gateway
+        image: kilo/gateway:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8000
+        # Override wait script to use correct DNS name
+        command:
+        - /bin/bash
+        - -c
+        - |
+          python3 -c "import socket,time,sys;h,p=sys.argv[1].split(':');p=int(p);s=time.time()
+          while time.time()-s<120:
+           try:socket.create_connection((h,p),timeout=2);print(f'Connected to {h}:{p}');break
+           except:time.sleep(2)
+          else:print(f'Timeout waiting for {h}:{p}');sys.exit(1)" kilo-ai-brain:9004 && uvicorn main:app --host 0.0.0.0 --port 8000
+        envFrom:
+        - secretRef: {name: library-admin}
+        - configMapRef: {name: kilo-config}
+        readinessProbe:
+          httpGet: {path: /health, port: 8000}
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 8000}
+          initialDelaySeconds: 20
+          periodSeconds: 20
+        resources:
+          requests: {cpu: "100m", memory: "128Mi"}
+          limits: {cpu: "500m", memory: "512Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-frontend
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-frontend
+  template:
+    metadata:
+      labels:
+        app: kilo-frontend
+    spec:
+      containers:
+      - name: frontend
+        image: kilo/frontend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+        resources:
+          requests: {cpu: "50m", memory: "64Mi"}
+          limits: {cpu: "200m", memory: "256Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-reminder
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-reminder
+  template:
+    metadata:
+      labels:
+        app: kilo-reminder
+    spec:
+      containers:
+      - name: reminder
+        image: kilo/reminder:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9002
+        envFrom:
+        - configMapRef: {name: kilo-config}
+        readinessProbe:
+          httpGet: {path: /health, port: 9002}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 9002}
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        resources:
+          requests: {cpu: "50m", memory: "128Mi"}
+          limits: {cpu: "200m", memory: "256Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-habits
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-habits
+  template:
+    metadata:
+      labels:
+        app: kilo-habits
+    spec:
+      containers:
+      - name: habits
+        image: kilo/habits:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9000
+        # Override wait script to use correct DNS name AND correct port
+        command:
+        - /bin/bash
+        - -c
+        - |
+          python3 -c "import socket,time,sys;h,p=sys.argv[1].split(':');p=int(p);s=time.time()
+          while time.time()-s<120:
+           try:socket.create_connection((h,p),timeout=2);print(f'Connected to {h}:{p}');break
+           except:time.sleep(2)
+          else:print(f'Timeout waiting for {h}:{p}');sys.exit(1)" kilo-ai-brain:9004 && uvicorn main:app --host 0.0.0.0 --port 9000
+        envFrom:
+        - configMapRef: {name: kilo-config}
+        readinessProbe:
+          httpGet: {path: /health, port: 9000}
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 9000}
+          initialDelaySeconds: 20
+          periodSeconds: 20
+        resources:
+          requests: {cpu: "50m", memory: "128Mi"}
+          limits: {cpu: "200m", memory: "256Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-meds
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-meds
+  template:
+    metadata:
+      labels:
+        app: kilo-meds
+    spec:
+      containers:
+      - name: meds
+        image: kilo/meds:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9000
+        # Override wait script to use correct DNS name AND correct port
+        command:
+        - /bin/bash
+        - -c
+        - |
+          python3 -c "import socket,time,sys;h,p=sys.argv[1].split(':');p=int(p);s=time.time()
+          while time.time()-s<120:
+           try:socket.create_connection((h,p),timeout=2);print(f'Connected to {h}:{p}');break
+           except:time.sleep(2)
+          else:print(f'Timeout waiting for {h}:{p}');sys.exit(1)" kilo-reminder:9002 && uvicorn main:app --host 0.0.0.0 --port 9000
+        envFrom:
+        - configMapRef: {name: kilo-config}
+        readinessProbe:
+          httpGet: {path: /health, port: 9000}
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 9000}
+          initialDelaySeconds: 20
+          periodSeconds: 20
+        resources:
+          requests: {cpu: "50m", memory: "128Mi"}
+          limits: {cpu: "200m", memory: "256Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-financial
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-financial
+  template:
+    metadata:
+      labels:
+        app: kilo-financial
+    spec:
+      containers:
+      - name: financial
+        image: kilo/financial:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9005
+        envFrom:
+        - configMapRef: {name: kilo-config}
+        readinessProbe:
+          httpGet: {path: /health, port: 9005}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 9005}
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        resources:
+          requests: {cpu: "50m", memory: "128Mi"}
+          limits: {cpu: "200m", memory: "256Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-cam
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-cam
+  template:
+    metadata:
+      labels:
+        app: kilo-cam
+    spec:
+      containers:
+      - name: cam
+        image: kilo/cam:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9007
+        # Override wait script to use correct DNS name
+        command:
+        - /bin/bash
+        - -c
+        - |
+          python3 -c "import socket,time,sys;h,p=sys.argv[1].split(':');p=int(p);s=time.time()
+          while time.time()-s<120:
+           try:socket.create_connection((h,p),timeout=2);print(f'Connected to {h}:{p}');break
+           except:time.sleep(2)
+          else:print(f'Timeout waiting for {h}:{p}');sys.exit(1)" kilo-ai-brain:9004 && python3 main.py
+        resources:
+          requests: {cpu: "100m", memory: "256Mi"}
+          limits: {cpu: "500m", memory: "512Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-library
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-library
+  template:
+    metadata:
+      labels:
+        app: kilo-library
+    spec:
+      containers:
+      - name: library
+        image: kilo/library_of_truth:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9006
+        envFrom:
+        - configMapRef: {name: kilo-config}
+        readinessProbe:
+          httpGet: {path: /health, port: 9006}
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        livenessProbe:
+          httpGet: {path: /health, port: 9006}
+          initialDelaySeconds: 15
+          periodSeconds: 20
+        resources:
+          requests: {cpu: "50m", memory: "128Mi"}
+          limits: {cpu: "200m", memory: "256Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-ml-engine
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-ml-engine
+  template:
+    metadata:
+      labels:
+        app: kilo-ml-engine
+    spec:
+      containers:
+      - name: ml-engine
+        image: kilo/ml_engine:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9009
+        envFrom:
+        - configMapRef: {name: kilo-config}
+        resources:
+          requests: {cpu: "100m", memory: "256Mi"}
+          limits: {cpu: "1000m", memory: "1Gi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-voice
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-voice
+  template:
+    metadata:
+      labels:
+        app: kilo-voice
+    spec:
+      containers:
+      - name: voice
+        image: kilo/voice:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9008
+        envFrom:
+        - configMapRef: {name: kilo-config}
+        resources:
+          requests: {cpu: "50m", memory: "128Mi"}
+          limits: {cpu: "200m", memory: "256Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-usb-transfer
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-usb-transfer
+  template:
+    metadata:
+      labels:
+        app: kilo-usb-transfer
+    spec:
+      containers:
+      - name: usb-transfer
+        image: kilo/usb_transfer:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9010
+        envFrom:
+        - configMapRef: {name: kilo-config}
+        resources:
+          requests: {cpu: "50m", memory: "128Mi"}
+          limits: {cpu: "200m", memory: "256Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-socketio
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-socketio
+  template:
+    metadata:
+      labels:
+        app: kilo-socketio
+    spec:
+      containers:
+      - name: socketio
+        image: python:3.11-slim
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9011
+        envFrom:
+        - configMapRef: {name: kilo-config}
+        resources:
+          requests: {cpu: "50m", memory: "128Mi"}
+          limits: {cpu: "200m", memory: "256Mi"}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-ollama
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-ollama
+  template:
+    metadata:
+      labels:
+        app: kilo-ollama
+    spec:
+      containers:
+      - name: ollama
+        image: ollama/ollama:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 11434
+        resources:
+          requests: {cpu: "500m", memory: "1Gi"}
+          limits: {cpu: "2000m", memory: "4Gi"}
