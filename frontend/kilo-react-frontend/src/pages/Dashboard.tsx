@@ -14,9 +14,24 @@ import { useDeviceDetection } from '../utils/deviceDetection';
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
-  const [messages, setMessages] = useState<Message[]>([
-    { id: '1', role: 'ai', content: "Hey Kyle! I'm Kilo, your AI assistant. How can I help you today?", timestamp: new Date() }
-  ]);
+  
+  // Load chat messages from localStorage on mount
+  const [messages, setMessages] = useState<Message[]>(() => {
+    const saved = localStorage.getItem('dashboard-chat-messages');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return parsed.map((m: any) => ({
+          ...m,
+          timestamp: new Date(m.timestamp)
+        }));
+      } catch {
+        return [{ id: '1', role: 'ai', content: "Hey Kyle! I'm Kilo, your AI assistant. How can I help you today?", timestamp: new Date() }];
+      }
+    }
+    return [{ id: '1', role: 'ai', content: "Hey Kyle! I'm Kilo, your AI assistant. How can I help you today?", timestamp: new Date() }];
+  });
+  
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
@@ -28,7 +43,6 @@ const Dashboard: React.FC = () => {
     monthlySpending: number;
     insightsGenerated: number;
   }>({ totalMemories: 0, activeHabits: 0, upcomingReminders: 0, monthlySpending: 0, insightsGenerated: 0 });
-  const [memoryViz, setMemoryViz] = useState<{ timeline: { date: string; count: number }[]; categories: { name: string; count: number }[] }>({ timeline: [], categories: [] });
 
   // Weekly schedule data
   const [weeklySchedule, setWeeklySchedule] = useState<any[]>([]);
@@ -128,18 +142,18 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     scrollToBottom();
+    // Save messages to localStorage whenever they change
+    localStorage.setItem('dashboard-chat-messages', JSON.stringify(messages));
   }, [messages]);
 
   useEffect(() => {
-    fetchInsights();
     fetchStats();
-    fetchMemoryVisualization();
     fetchWeeklySchedule();
   }, []);
 
   useEffect(() => {
     const newSocket = io(process.env.REACT_APP_API_URL || window.location.origin, {
-      path: '/api/socket.io',
+      path: '/socket.io',
       transports: ['websocket', 'polling']
     });
 
@@ -162,15 +176,6 @@ const Dashboard: React.FC = () => {
     };
   }, []);
 
-  const fetchInsights = async () => {
-    try {
-      const response = await api.get('/ml/insights/patterns');
-      setInsights(response.data);
-    } catch (error) {
-      console.error('Failed to fetch insights:', error);
-    }
-  };
-
   const fetchStats = async () => {
     try {
       const response = await api.get('/ai_brain/stats/dashboard');
@@ -182,24 +187,24 @@ const Dashboard: React.FC = () => {
 
   const fetchWeeklySchedule = async () => {
     try {
+      // Calculate start date (Monday of this week)
+      const today = new Date();
+      const currentDayOfWeek = today.getDay();
+      const startDate = new Date(today);
+      if (currentDayOfWeek !== 1) {
+        startDate.setDate(today.getDate() - currentDayOfWeek + (currentDayOfWeek === 0 ? -6 : 1));
+      }
+      const startDateStr = startDate.toISOString().split('T')[0];
+      
       // Fetch reminders, habits, and bills for the next 7 days
       const [remindersRes, habitsRes, financialRes] = await Promise.all([
-        api.get('/reminder/reminders').catch(() => ({ data: [] })),
+        api.get(`/reminder/reminders/week?start_date=${startDateStr}`).catch(() => ({ data: [] })),
         api.get('/habits').catch(() => ({ data: [] })),
-        api.get('/financial/transaction').catch(() => ({ data: [] }))
+        api.get('/financial/transactions').catch(() => ({ data: [] }))
       ]);
 
       // Build 7-day schedule starting from Monday
       const schedule = [];
-      const today = new Date();
-      
-      // Calculate days until next Monday (or today if today is Monday)
-      const currentDayOfWeek = today.getDay(); // 0=Sunday, 1=Monday, etc.
-      const daysUntilMonday = currentDayOfWeek === 0 ? 1 : (8 - currentDayOfWeek) % 7;
-      const startDate = new Date(today);
-      if (currentDayOfWeek !== 1) { // If not Monday
-        startDate.setDate(today.getDate() - currentDayOfWeek + (currentDayOfWeek === 0 ? -6 : 1));
-      }
       
       for (let i = 0; i < 7; i++) {
         const date = new Date(startDate);
@@ -214,7 +219,7 @@ const Dashboard: React.FC = () => {
         const afternoon: any[] = [];  // 12pm-5pm
         const evening: any[] = [];    // 5pm-11pm
 
-        // Process reminders
+        // Process reminders (already expanded by backend)
         const reminders = Array.isArray(remindersRes.data) ? remindersRes.data : [];
         reminders.forEach((r: any) => {
           if (r.when && r.when.startsWith(dateStr)) {
@@ -263,15 +268,6 @@ const Dashboard: React.FC = () => {
       setWeeklySchedule(schedule);
     } catch (error) {
       console.error('Failed to fetch weekly schedule:', error);
-    }
-  };
-
-  const fetchMemoryVisualization = async () => {
-    try {
-      const response = await api.get('/ai_brain/memory/visualization');
-      setMemoryViz(response.data);
-    } catch (error) {
-      console.error('Failed to fetch memory visualization:', error);
     }
   };
 
@@ -732,22 +728,6 @@ const Dashboard: React.FC = () => {
               </div>
             ))}
           </div>
-        </Card>
-      )}
-
-      {/* Memory Activity Chart */}
-      {memoryViz.timeline.length > 0 && (
-        <Card className="mb-6">
-          <h3 className="text-xl font-semibold text-zombie-green mb-3">Memory Activity</h3>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={memoryViz.timeline}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-              <XAxis dataKey="date" stroke="#9CA3AF" fontSize={12} />
-              <YAxis stroke="#9CA3AF" fontSize={12} />
-              <Tooltip contentStyle={{ backgroundColor: '#1F2937', border: '1px solid #374151', borderRadius: '8px' }} />
-              <Line type="monotone" dataKey="count" stroke="#10B981" strokeWidth={2} dot={{ fill: '#10B981', strokeWidth: 2, r: 4 }} />
-            </LineChart>
-          </ResponsiveContainer>
         </Card>
       )}
 

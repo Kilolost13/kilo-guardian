@@ -459,6 +459,66 @@ def get_reminders():
         return {"reminders": result}
 
 
+@app.get("/reminders/week")
+def get_weekly_reminders(start_date: Optional[str] = None):
+    """Get reminders for the next 7 days, expanding recurring reminders"""
+    with Session(engine) as session:
+        reminders = session.exec(select(Reminder)).all()
+        
+        # Calculate date range (7 days starting from start_date or today)
+        if start_date:
+            try:
+                base_date = datetime.fromisoformat(start_date.split('T')[0])
+            except:
+                base_date = datetime.now()
+        else:
+            base_date = datetime.now()
+        
+        expanded = []
+        
+        for day_offset in range(7):
+            current_date = base_date + timedelta(days=day_offset)
+            date_str = current_date.date().isoformat()
+            
+            for r in reminders:
+                # Parse reminder time
+                try:
+                    reminder_dt = datetime.fromisoformat(r.when.replace('Z', '+00:00'))
+                    reminder_time = reminder_dt.time()
+                except:
+                    continue
+                
+                # Check if this reminder applies to current_date
+                include = False
+                
+                if r.recurrence == "daily":
+                    # Daily reminders apply to every day
+                    include = True
+                elif r.recurrence == "weekly":
+                    # Weekly reminders apply if day of week matches
+                    reminder_day = reminder_dt.weekday()
+                    if current_date.weekday() == reminder_day:
+                        include = True
+                elif r.recurrence is None:
+                    # One-time reminders only on their specific date
+                    if reminder_dt.date() == current_date.date():
+                        include = True
+                
+                if include:
+                    # Create expanded reminder with the current date
+                    expanded_when = datetime.combine(current_date.date(), reminder_time).isoformat()
+                    expanded.append({
+                        "id": f"{r.id}_{date_str}",
+                        "original_id": r.id,
+                        "text": r.text,
+                        "when": expanded_when,
+                        "recurrence": r.recurrence,
+                        "sent": r.sent
+                    })
+        
+        return expanded
+
+
 @app.post("/reminders")
 async def create_reminder(request: Request):
     """Create a reminder using frontend schema"""
@@ -525,7 +585,12 @@ async def create_series(payload: dict):
     name = payload.get("name") or "Medication"
     freq = payload.get("frequency_per_day") or 1
     times = payload.get("times") or []
-    start_date = payload.get("start_date") or datetime.utcnow().date().isoformat()
+    start_date_raw = payload.get("start_date") or datetime.utcnow().date().isoformat()
+    # Extract just the date part if it's a full ISO timestamp
+    if 'T' in str(start_date_raw):
+        start_date = str(start_date_raw).split('T')[0]
+    else:
+        start_date = start_date_raw
     schedule_text = payload.get("schedule")
 
     if not med_id:
@@ -872,3 +937,138 @@ def trigger_reminder(reminder_id: int, request: Request = None):
     # run send in background thread to avoid blocking
     threading.Thread(target=_send_reminder, args=(reminder_id,), daemon=True).start()
     return {"status": "triggered"}
+
+
+@app.get("/notifications/pending")
+async def get_pending_notifications():
+    """Get all unsent notifications for the frontend to display."""
+    try:
+        from shared.models import Notification
+        with Session(engine) as session:
+            notifications = session.exec(
+                select(Notification).where(Notification.sent == False)
+            ).all()
+            return {
+                "notifications": [
+                    {
+                        "id": n.id,
+                        "channel": n.channel,
+                        "payload_json": n.payload_json,
+                        "created_at": n.created_at.isoformat() if n.created_at else None
+                    }
+                    for n in notifications
+                ]
+            }
+    except Exception as e:
+        return {"notifications": [], "error": str(e)}
+
+
+@app.post("/notifications/{notification_id}/mark_read")
+async def mark_notification_read(notification_id: int):
+    """Mark a notification as sent/read (dismissed without action)."""
+    try:
+        from shared.models import Notification
+        with Session(engine) as session:
+            notification = session.get(Notification, notification_id)
+            if notification:
+                notification.sent = True
+                session.add(notification)
+                session.commit()
+                return {"status": "ok"}
+            return {"status": "not_found"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/notifications/{notification_id}/confirm")
+async def confirm_notification(notification_id: int, response: dict):
+    """
+    Confirm/complete a notification action.
+    Records to habits/AI ML and marks as complete.
+    
+    Expected body: {
+        "action": "completed" | "skipped" | "snoozed",
+        "snooze_minutes": 15 (optional, if snoozed),
+        "notes": "optional user notes"
+    }
+    """
+    try:
+        from shared.models import Notification, Reminder
+        import json
+        from datetime import datetime, timedelta
+        
+        with Session(engine) as session:
+            notification = session.get(Notification, notification_id)
+            if not notification:
+                return {"status": "not_found"}
+            
+            # Parse the notification payload
+            payload = json.loads(notification.payload_json)
+            reminder_id = payload.get("id")
+            
+            action = response.get("action", "completed")
+            
+            # Record to habit tracker via gateway
+            try:
+                import requests
+                habit_data = {
+                    "reminder_id": reminder_id,
+                    "notification_id": notification_id,
+                    "action": action,
+                    "timestamp": datetime.now().isoformat(),
+                    "notes": response.get("notes", ""),
+                    "reminder_text": payload.get("text", "")
+                }
+                requests.post(
+                    "http://kilo-gateway:8000/api/habits/record-reminder-action",
+                    json=habit_data,
+                    timeout=5
+                )
+            except Exception as e:
+                print(f"Failed to record to habits: {e}")
+            
+            # Handle based on action
+            if action == "snoozed":
+                # Create new reminder for snooze time
+                snooze_minutes = response.get("snooze_minutes", 15)
+                reminder = session.get(Reminder, reminder_id)
+                if reminder:
+                    new_time = datetime.now() + timedelta(minutes=snooze_minutes)
+                    new_reminder = Reminder(
+                        text=f"{reminder.text} (snoozed)",
+                        when=new_time.isoformat(),
+                        recurrence=None
+                    )
+                    session.add(new_reminder)
+            
+            elif action == "completed":
+                # Mark original reminder as completed if one-time
+                reminder = session.get(Reminder, reminder_id)
+                if reminder and not reminder.recurrence:
+                    session.delete(reminder)
+            
+            # Mark notification as sent
+            notification.sent = True
+            session.add(notification)
+            session.commit()
+            
+            return {
+                "status": "ok",
+                "action": action,
+                "recorded_to_habits": True
+            }
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/notifications/clear-all")
+async def clear_all_notifications():
+    """Mark ALL notifications as sent/read."""
+    try:
+        from shared.models import Notification
+        from sqlalchemy import update
+        with Session(engine) as session:
+            result = session.execute(update(Notification).values(sent=True))
+            session.commit()
+            return {"status": "ok", "cleared": result.rowcount}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

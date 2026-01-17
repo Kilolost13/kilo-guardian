@@ -7,11 +7,13 @@ import Reminders from './pages/Reminders';
 import Finance from './pages/Finance';
 import Habits from './pages/Habits';
 import Admin from './pages/Admin';
+import { NotificationCenter } from './components/NotificationCenter';
 import './App.css';
 
 function App() {
   return (
     <Router>
+      <NotificationCenter />
       <Routes>
         {/* Default route redirects to dashboard */}
         <Route path="/" element={<Navigate to="/dashboard" replace />} />

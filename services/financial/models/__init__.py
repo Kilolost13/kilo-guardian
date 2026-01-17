@@ -8,6 +8,8 @@ class Transaction(SQLModel, table=True):
     description: str
     date: str
     source: Optional[str] = None  # e.g., 'manual', 'ocr'
+    category: Optional[str] = None  # Budget category
+    exclude_from_balance: Optional[bool] = False  # Exclude from balance calculations (transfers, reimbursements, etc.)
 
 
 class ReceiptItem(SQLModel, table=True):

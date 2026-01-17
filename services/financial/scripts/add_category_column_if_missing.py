@@ -6,7 +6,7 @@ from sqlmodel import create_engine
 import sqlite3
 import os
 
-DB_PATH = "/tmp/financial.db"
+DB_PATH = "/data/financial.db"
 DB_URL = f"sqlite:///{DB_PATH}"
 
 

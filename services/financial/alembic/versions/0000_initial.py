@@ -3,6 +3,7 @@
 Revision ID: 0000_initial
 Revises: 
 Create Date: 2026-01-14 00:00:00
+Updated: 2026-01-16 - Added category column to transaction table
 """
 from alembic import op
 import sqlalchemy as sa
@@ -23,6 +24,7 @@ def upgrade():
         sa.Column('description', sa.String(), nullable=False),
         sa.Column('date', sa.String(), nullable=False),
         sa.Column('source', sa.String(), nullable=True),
+        sa.Column('category', sa.String(), nullable=True),
         sa.PrimaryKeyConstraint('id')
     )
     

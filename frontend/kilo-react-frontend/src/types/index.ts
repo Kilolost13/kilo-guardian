@@ -15,6 +15,8 @@ export interface Medication {
   quantity: number;
   nextDose?: Date;
   taken?: boolean;
+  frequency_per_day?: number;
+  times?: string; // Comma-separated times
 }
 
 export interface Reminder {

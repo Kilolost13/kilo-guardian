@@ -141,14 +141,14 @@ def _generate_ollama_response(prompt: str, model: Optional[str] = None) -> str:
         openai_payload = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "max_tokens": 500,
+            "max_tokens": 300,
             "temperature": 0.7
         }
         
         response = httpx.post(
             f"{ollama_url}/v1/chat/completions",
             json=openai_payload,
-            timeout=180
+            timeout=120
         )
         
         if response.status_code == 200:

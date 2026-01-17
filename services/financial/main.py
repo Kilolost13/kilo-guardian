@@ -246,8 +246,12 @@ def list_transactions():
             d["items"] = [it.dict() for it in items]
             # Derive transaction_type for frontend (income vs expense)
             d["transaction_type"] = "income" if (d.get("amount") or 0) > 0 else "expense"
-            # Derive category: use most common receipt item category, else categorize description
-            if items:
+            # Derive category: use transaction's category if set, else use receipt items, else categorize description
+            # Updated 2026-01-16: Preserve saved categories from database
+            if d.get("category"):
+                # Transaction already has a category, keep it
+                pass
+            elif items:
                 cat_counts = {}
                 for it in items:
                     cat = (it.category or "uncategorized").lower()
@@ -395,20 +399,23 @@ def get_budgets():
         out = []
         for b in budgets:
             # Sum expenses for this category in the current month
-            # Note: Transaction doesn't have category field, derive it from description/items
             spent = 0.0
             for t in transactions:
                 if safe_number(t.amount) < 0 and t.date.startswith(current_month):
-                    # Get category from receipt items or categorize description
-                    items = session.exec(select(ReceiptItem).where(ReceiptItem.transaction_id == t.id)).all()
-                    if items:
-                        cat_counts = {}
-                        for it in items:
-                            cat = (it.category or "uncategorized").lower()
-                            cat_counts[cat] = cat_counts.get(cat, 0) + 1
-                        trans_category = max(cat_counts, key=cat_counts.get)
+                    # Use category field if available, otherwise derive from description/items
+                    if hasattr(t, 'category') and t.category:
+                        trans_category = t.category
                     else:
-                        trans_category = _categorize_item(t.description or "")
+                        # Get category from receipt items or categorize description
+                        items = session.exec(select(ReceiptItem).where(ReceiptItem.transaction_id == t.id)).all()
+                        if items:
+                            cat_counts = {}
+                            for it in items:
+                                cat = (it.category or "uncategorized").lower()
+                                cat_counts[cat] = cat_counts.get(cat, 0) + 1
+                            trans_category = max(cat_counts, key=cat_counts.get)
+                        else:
+                            trans_category = _categorize_item(t.description or "")
                     
                     if trans_category.lower() == b.category.lower():
                         spent += abs(safe_number(t.amount))

@@ -39,12 +39,34 @@ class AdminToken(SQLModel, table=True):
     created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
 
 
+# Persistent HTTP client for proxying requests (prevents connection exhaustion)
+http_client: Optional[httpx.AsyncClient] = None
+
+
 @app.on_event("startup")
-def startup():
+async def startup():
+    global http_client
     try:
         SQLModel.metadata.create_all(engine)
     except Exception:
         pass
+    
+    # Create persistent HTTP client with connection pooling
+    # This prevents "client has been closed" errors and improves performance
+    http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(120.0, connect=10.0),  # 120s for LLM/OCR, 10s connect timeout
+        limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+        follow_redirects=True
+    )
+    logger.info("Gateway HTTP client initialized with connection pooling")
+
+
+@app.on_event("shutdown")
+async def shutdown():
+    global http_client
+    if http_client:
+        await http_client.aclose()
+        logger.info("Gateway HTTP client closed")
 
 
 def _hash_token(token: str) -> str:
@@ -368,88 +390,88 @@ async def _proxy(request: Request, service: str, path: str):
     # Remove content-length as we may be streaming
     headers.pop("content-length", None)
 
-    # Use a slightly more robust request with timing and retries for slow endpoints
+    # Use persistent HTTP client with retries for reliability
+    global http_client
+    if not http_client:
+        raise HTTPException(status_code=503, detail="Gateway HTTP client not initialized")
+    
     retries = 2
     backoff = 0.5
-    async with httpx.AsyncClient(timeout=120.0) as client:  # Increased timeout for OCR/LLM processing
-        last_exc = None
-        for attempt in range(1, retries + 1):
-            start_ts = time.time()
+    last_exc = None
+    
+    for attempt in range(1, retries + 1):
+        start_ts = time.time()
+        try:
+            # Check if this is a multipart/form-data request (file upload)
+            content_type = request.headers.get("content-type", "")
+
+            if "multipart/form-data" in content_type:
+                # For multipart, stream the body directly to preserve boundaries
+                req = http_client.build_request(
+                    request.method,
+                    url,
+                    headers=headers,
+                    params=request.query_params,
+                    content=request.stream()  # Stream instead of body()
+                )
+            else:
+                # For regular requests, use body
+                req = http_client.build_request(
+                    request.method,
+                    url,
+                    headers=headers,
+                    params=request.query_params,
+                    content=await request.body()
+                )
+            resp = await http_client.send(req, stream=True)
+            elapsed = time.time() - start_ts
+
+            # Log slow responses for ai_brain specifically
+            if service == 'ai_brain' and elapsed > 3.0:
+                logger.warning(f"ai_brain slow response: {request.method} {path} took {elapsed:.2f}s (attempt {attempt})")
+
+            content_type = resp.headers.get("content-type", "application/json")
+            data = await resp.aread()
+
+            # Handle binary responses (images, PDFs, etc.)
+            if content_type.startswith("image/") or content_type == "application/pdf":
+                from fastapi.responses import Response as FastAPIResponse
+                logger.info(f"Proxy OK: {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
+                return FastAPIResponse(content=data, media_type=content_type, status_code=resp.status_code)
+
+            # Handle JSON responses
+            import json
             try:
-                # Check if this is a multipart/form-data request (file upload)
-                content_type = request.headers.get("content-type", "")
-
-                if "multipart/form-data" in content_type:
-                    # For multipart, stream the body directly to preserve boundaries
-                    req = client.build_request(
-                        request.method,
-                        url,
-                        headers=headers,
-                        params=request.query_params,
-                        content=request.stream()  # Stream instead of body()
-                    )
-                else:
-                    # For regular requests, use body
-                    req = client.build_request(
-                        request.method,
-                        url,
-                        headers=headers,
-                        params=request.query_params,
-                        content=await request.body()
-                    )
-                resp = await client.send(req, stream=True)
-                elapsed = time.time() - start_ts
-
-                # Log slow responses for ai_brain specifically
-                if service == 'ai_brain' and elapsed > 3.0:
-                    logger.warning(f"ai_brain slow response: {request.method} {path} took {elapsed:.2f}s (attempt {attempt})")
-
-                content_type = resp.headers.get("content-type", "application/json")
-                data = await resp.aread()
-
-                # Handle binary responses (images, PDFs, etc.)
-                if content_type.startswith("image/") or content_type == "application/pdf":
-                    from fastapi.responses import Response as FastAPIResponse
-                    logger.info(f"Proxy OK: {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
-                    return FastAPIResponse(content=data, media_type=content_type, status_code=resp.status_code)
-
-                # Handle JSON responses
-                import json
+                parsed = json.loads(data)
+                logger.info(f"Proxy OK: {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
+                return JSONResponse(content=parsed, status_code=resp.status_code)
+            except Exception:
                 try:
-                    parsed = json.loads(data)
-                    logger.info(f"Proxy OK: {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
-                    return JSONResponse(content=parsed, status_code=resp.status_code)
-                except Exception:
-                    try:
-                        text_content = data.decode('utf-8')
-                        logger.info(f"Proxy OK (text): {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
-                        return JSONResponse(content={"raw": text_content}, status_code=resp.status_code)
-                    except UnicodeDecodeError:
-                        import base64
-                        logger.info(f"Proxy OK (binary): {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
-                        return JSONResponse(content={"raw_base64": base64.b64encode(data).decode()}, status_code=resp.status_code)
+                    text_content = data.decode('utf-8')
+                    logger.info(f"Proxy OK (text): {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
+                    return JSONResponse(content={"raw": text_content}, status_code=resp.status_code)
+                except UnicodeDecodeError:
+                    import base64
+                    logger.info(f"Proxy OK (binary): {request.method} {url} -> {resp.status_code} in {elapsed:.2f}s")
+                    return JSONResponse(content={"raw_base64": base64.b64encode(data).decode()}, status_code=resp.status_code)
 
-            except httpx.RequestError as e:
-                elapsed = time.time() - start_ts
-                logger.error(f"Proxy request error to {service} {url} (attempt {attempt}) after {elapsed:.2f}s: {e}")
-                last_exc = e
-                if attempt < retries:
-                    await client.aclose()
-                    await asyncio.sleep(backoff * attempt)
-                    continue
-                else:
-                    raise HTTPException(status_code=502, detail=f"Bad Gateway: {e}")
+        except httpx.RequestError as e:
+            elapsed = time.time() - start_ts
+            logger.error(f"Proxy request error to {service} {url} (attempt {attempt}/{retries}) after {elapsed:.2f}s: {e}")
+            last_exc = e
+            if attempt < retries:
+                await asyncio.sleep(backoff * attempt)
+                continue
+            else:
+                raise HTTPException(status_code=502, detail=f"Bad Gateway: {e}")
+    
+    # Should never reach here, but just in case
+    if last_exc:
+        raise HTTPException(status_code=502, detail=f"Bad Gateway: {last_exc}")
 
-
-@app.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
-async def proxy_all(request: Request, service: str, path: str):
-    return await _proxy(request, service, path)
-
-@app.api_route("/{service}", methods=["GET", "POST", "PUT", "DELETE"])
-async def proxy_root(request: Request, service: str):
-    return await _proxy(request, service, "")
 
 # Socket.IO support for real-time updates (optional dependency)
+# NOTE: Mount Socket.IO BEFORE proxy routes so it takes precedence
 try:
     import socketio
 except ImportError:  # pragma: no cover - optional path for minimal installs
@@ -466,9 +488,10 @@ if socketio:
     )
 
     # Wrap with ASGI app
+    # NOTE: socketio_path must be empty because FastAPI's mount() strips the /socket.io prefix
     socket_app = socketio.ASGIApp(
         socketio_server=sio,
-        socketio_path='socket.io'
+        socketio_path=''
     )
 
     # Mount Socket.IO app
@@ -487,3 +510,23 @@ if socketio:
     async def ping(sid, data):
         """Handle ping from client"""
         await sio.emit('pong', {'timestamp': time.time()}, room=sid)
+
+
+@app.api_route("/api/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy_all_api(request: Request, service: str, path: str):
+    return await _proxy(request, service, path)
+
+@app.api_route("/api/{service}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy_root_api(request: Request, service: str):
+    return await _proxy(request, service, "")
+
+# NOTE: Catch-all routes disabled to allow Socket.IO mount at /socket.io
+# All services should be accessed via /api/ prefix
+# @app.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+# async def proxy_all(request: Request, service: str, path: str):
+#     return await _proxy(request, service, path)
+
+# @app.api_route("/{service}", methods=["GET", "POST", "PUT", "DELETE"])
+# async def proxy_root(request: Request, service: str):
+#     return await _proxy(request, service, "")
+

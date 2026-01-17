@@ -15,7 +15,8 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 # set sqlalchemy.url from env if provided
-sqlalchemy_url = os.getenv('DATABASE_URL', 'sqlite:////tmp/financial.db')
+# Use /data instead of /tmp so data persists across container restarts
+sqlalchemy_url = os.getenv('DATABASE_URL', 'sqlite:////data/financial.db')
 config.set_main_option('sqlalchemy.url', sqlalchemy_url)
 
 # Import the SQLModel metadata from the application

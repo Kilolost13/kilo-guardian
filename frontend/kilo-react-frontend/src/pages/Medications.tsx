@@ -25,7 +25,9 @@ const Medications: React.FC = () => {
     schedule: '',
     prescriber: '',
     quantity: 0,
-    instructions: ''
+    instructions: '',
+    frequency_per_day: 1,
+    times: [] as string[] // Array of times like ["08:00", "20:00"]
   });
 
   useEffect(() => {
@@ -60,14 +62,21 @@ const Medications: React.FC = () => {
       schedule: med.schedule || '',
       prescriber: med.prescriber || '',
       quantity: med.quantity || 0,
-      instructions: med.instructions || ''
+      instructions: med.instructions || '',
+      frequency_per_day: med.frequency_per_day || 1,
+      times: med.times ? med.times.split(',') : []
     });
   };
 
   const saveEdit = async () => {
     if (!editingMed) return;
     try {
-      await api.put(`/meds/${editingMed.id}`, editForm);
+      // Convert times array to comma-separated string
+      const medData = {
+        ...editForm,
+        times: editForm.times.join(',')
+      };
+      await api.put(`/meds/${editingMed.id}`, medData);
       setEditingMed(null);
       fetchMedications();
     } catch (error) {
@@ -82,7 +91,12 @@ const Medications: React.FC = () => {
       return;
     }
     try {
-      await api.post('/meds/add', editForm);
+      // Convert times array to comma-separated string
+      const medData = {
+        ...editForm,
+        times: editForm.times.join(',')
+      };
+      await api.post('/meds/add', medData);
       setShowAddForm(false);
       setEditForm({
         name: '',
@@ -90,7 +104,9 @@ const Medications: React.FC = () => {
         schedule: '',
         prescriber: '',
         quantity: 0,
-        instructions: ''
+        instructions: '',
+        frequency_per_day: 1,
+        times: []
       });
       fetchMedications();
     } catch (error) {
@@ -304,13 +320,67 @@ const Medications: React.FC = () => {
                 rows={2}
               />
             </div>
+
+            {/* Reminder Schedule */}
+            <div className="border-t-2 border-zombie-green pt-3 mt-3">
+              <h4 className="text-sm font-bold text-zombie-green mb-2">⏰ REMINDER SCHEDULE</h4>
+              
+              <div className="mb-3">
+                <label className="block text-sm font-semibold text-zombie-green mb-1">
+                  How many times per day? *
+                </label>
+                <select
+                  value={editForm.frequency_per_day}
+                  onChange={(e) => {
+                    const freq = parseInt(e.target.value);
+                    setEditForm({ 
+                      ...editForm, 
+                      frequency_per_day: freq,
+                      times: Array(freq).fill('09:00') // Initialize with default times
+                    });
+                  }}
+                  className="w-full p-2 bg-zombie-dark text-zombie-green border-2 border-zombie-green rounded terminal-text"
+                >
+                  <option value={1}>Once daily</option>
+                  <option value={2}>Twice daily</option>
+                  <option value={3}>Three times daily</option>
+                  <option value={4}>Four times daily</option>
+                  <option value={6}>Six times daily</option>
+                </select>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-semibold text-zombie-green mb-1">
+                  Set specific times:
+                </label>
+                {Array.from({ length: editForm.frequency_per_day }).map((_, idx) => (
+                  <div key={idx} className="flex items-center gap-2">
+                    <span className="text-zombie-green text-sm w-16">Time {idx + 1}:</span>
+                    <input
+                      type="time"
+                      value={editForm.times[idx] || '09:00'}
+                      onChange={(e) => {
+                        const newTimes = [...editForm.times];
+                        newTimes[idx] = e.target.value;
+                        setEditForm({ ...editForm, times: newTimes });
+                      }}
+                      className="flex-1 p-2 bg-zombie-dark text-zombie-green border-2 border-zombie-green rounded terminal-text"
+                    />
+                  </div>
+                ))}
+                <p className="text-xs text-zombie-green/70 mt-2">
+                  💡 Reminders will be automatically created for these times
+                </p>
+              </div>
+            </div>
+
             <Button
               onClick={addMedication}
               variant="success"
               size="md"
               className="w-full"
             >
-              ✓ ADD MEDICATION
+              ✓ ADD MEDICATION & CREATE REMINDERS
             </Button>
           </div>
         </Card>

@@ -141,6 +141,9 @@ spec:
         - containerPort: 9002
         envFrom:
         - configMapRef: {name: kilo-config}
+        volumeMounts:
+        - name: reminder-data
+          mountPath: /data
         readinessProbe:
           httpGet: {path: /health, port: 9002}
           initialDelaySeconds: 5
@@ -152,6 +155,10 @@ spec:
         resources:
           requests: {cpu: "50m", memory: "128Mi"}
           limits: {cpu: "200m", memory: "256Mi"}
+      volumes:
+      - name: reminder-data
+        persistentVolumeClaim:
+          claimName: reminder-data-pvc
 
 ---
 apiVersion: apps/v1
@@ -233,6 +240,9 @@ spec:
           else:print(f'Timeout waiting for {h}:{p}');sys.exit(1)" kilo-reminder:9002 && uvicorn main:app --host 0.0.0.0 --port 9000
         envFrom:
         - configMapRef: {name: kilo-config}
+        volumeMounts:
+        - name: meds-data
+          mountPath: /data
         readinessProbe:
           httpGet: {path: /health, port: 9000}
           initialDelaySeconds: 10
@@ -244,6 +254,10 @@ spec:
         resources:
           requests: {cpu: "50m", memory: "128Mi"}
           limits: {cpu: "200m", memory: "256Mi"}
+      volumes:
+      - name: meds-data
+        persistentVolumeClaim:
+          claimName: meds-data-pvc
 
 ---
 apiVersion: apps/v1
@@ -269,6 +283,9 @@ spec:
         - containerPort: 9005
         envFrom:
         - configMapRef: {name: kilo-config}
+        volumeMounts:
+        - name: financial-data
+          mountPath: /data
         readinessProbe:
           httpGet: {path: /health, port: 9005}
           initialDelaySeconds: 5
@@ -280,6 +297,10 @@ spec:
         resources:
           requests: {cpu: "50m", memory: "128Mi"}
           limits: {cpu: "200m", memory: "256Mi"}
+      volumes:
+      - name: financial-data
+        persistentVolumeClaim:
+          claimName: financial-data-pvc
 
 ---
 apiVersion: apps/v1
@@ -341,6 +362,9 @@ spec:
         - containerPort: 9006
         envFrom:
         - configMapRef: {name: kilo-config}
+        volumeMounts:
+        - name: library-data
+          mountPath: /data
         readinessProbe:
           httpGet: {path: /health, port: 9006}
           initialDelaySeconds: 5
@@ -352,6 +376,10 @@ spec:
         resources:
           requests: {cpu: "50m", memory: "128Mi"}
           limits: {cpu: "200m", memory: "256Mi"}
+      volumes:
+      - name: library-data
+        persistentVolumeClaim:
+          claimName: library-data-pvc
 
 ---
 apiVersion: apps/v1

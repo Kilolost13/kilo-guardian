@@ -14,6 +14,7 @@ import uuid
 import json
 from pathlib import Path
 from prometheus_client import Counter, Gauge, generate_latest, CONTENT_TYPE_LATEST
+import asyncio
 
 # Med model definition
 from datetime import datetime

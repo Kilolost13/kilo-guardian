@@ -318,6 +318,79 @@ def complete_habit(habit_id: int, background_tasks: BackgroundTasks = None):
         asyncio.create_task(_send_completion_to_ai_brain(habit, completion))
     return completion
 
+@app.post("/record-reminder-action")
+def record_reminder_action(payload: dict, background_tasks: BackgroundTasks = None):
+    """
+    Record a reminder action (completed/skipped/snoozed) from the reminder service.
+    This is critical for ML/AI learning and habit tracking.
+    
+    Expected payload: {
+        "reminder_id": int,
+        "notification_id": int,
+        "action": "completed" | "skipped" | "snoozed",
+        "timestamp": ISO datetime,
+        "notes": optional string,
+        "reminder_text": string
+    }
+    """
+    try:
+        action = payload.get("action", "completed")
+        reminder_text = payload.get("reminder_text", "")
+        timestamp = payload.get("timestamp")
+        notes = payload.get("notes", "")
+        
+        # Try to find associated habit (by reminder text or med_id if available)
+        with Session(engine) as session:
+            # First try exact name match
+            habit = session.query(Habit).filter(
+                Habit.name.contains(reminder_text) | 
+                Habit.name == reminder_text
+            ).first()
+            
+            # If found, record completion
+            if habit and action in ["completed", "skipped"]:
+                today = datetime.datetime.utcnow().date().isoformat()
+                
+                completion = HabitCompletion(
+                    habit_id=habit.id,
+                    completion_date=today,
+                    count=1 if action == "completed" else 0,
+                    reminder_id=payload.get("reminder_id"),
+                    status=action,
+                    med_id=habit.med_id
+                )
+                session.add(completion)
+                session.commit()
+                
+                # Send to AI brain for learning
+                if background_tasks:
+                    background_tasks.add_task(_send_completion_to_ai_brain, habit, completion)
+                
+                return {
+                    "status": "recorded",
+                    "habit_id": habit.id,
+                    "action": action,
+                    "ml_sent": True
+                }
+            else:
+                # No habit found - still log for AI to learn patterns
+                print(f"No habit found for reminder: {reminder_text}, action: {action}")
+                
+                # TODO: Send to AI brain even without habit association
+                # This helps AI learn about reminders that don't have habits yet
+                
+                return {
+                    "status": "no_habit_found",
+                    "action": action,
+                    "reminder_text": reminder_text,
+                    "ml_sent": False
+                }
+                
+    except Exception as e:
+        print(f"Error recording reminder action: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 async def _send_to_ai_brain(h: Habit):
     async with httpx.AsyncClient() as client:
         try:

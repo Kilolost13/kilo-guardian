@@ -12,6 +12,10 @@ interface Transaction {
   transaction_type: 'income' | 'expense';
   date: string;
   created_at: string;
+  is_recurring?: boolean;
+  bill_name?: string;
+  due_date?: string;
+  exclude_from_balance?: boolean;  // Exclude from balance calculations
 }
 
 interface FinancialSummary {
@@ -85,6 +89,21 @@ const Finance: React.FC = () => {
   const [analytics, setAnalytics] = useState<SpendingAnalytics | null>(null);
   const [showAnalytics, setShowAnalytics] = useState(false);
   const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  
+  // Collapsible section states
+  const [showBudgets, setShowBudgets] = useState(false);
+  const [showBills, setShowBills] = useState(false);
+  const [showTransactions, setShowTransactions] = useState(true); // Open by default
+  
+  // Transaction filtering and pagination
+  const [filterMonth, setFilterMonth] = useState<string>(''); // Format: 'YYYY-MM'
+  const [filterYear, setFilterYear] = useState<string>(''); // Format: 'YYYY'
+  const [filterCategory, setFilterCategory] = useState<string>('');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [viewMode, setViewMode] = useState<'monthly' | 'yearly' | 'all'>('monthly');
+  const transactionsPerPage = 50;
+  
   // Debug: log budgets after declaration
   useEffect(() => {
     if (budgets) {
@@ -94,6 +113,8 @@ const Finance: React.FC = () => {
   }, [budgets]);
   const [showAddBudget, setShowAddBudget] = useState(false);
   const [showAddGoal, setShowAddGoal] = useState(false);
+  const [showAddBill, setShowAddBill] = useState(false);
+  
   const [transactionForm, setTransactionForm] = useState({
     description: '',
     amount: '',
@@ -105,6 +126,13 @@ const Finance: React.FC = () => {
     category: '',
     monthly_limit: ''
   });
+  const [billForm, setBillForm] = useState({
+    bill_name: '',
+    amount: '',
+    category: '',
+    due_date: '',
+    is_recurring: true
+  });
   const [goalForm, setGoalForm] = useState({
     name: '',
     target_amount: '',
@@ -115,7 +143,128 @@ const Finance: React.FC = () => {
 
   useEffect(() => {
     fetchFinancialData();
+    // Set default filter to current month
+    const now = new Date();
+    setFilterMonth(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`);
+    setFilterYear(now.getFullYear().toString());
   }, []);
+
+  // Filter and paginate transactions
+  const getFilteredTransactions = () => {
+    let filtered = [...transactions];
+
+    // Apply search filter
+    if (searchTerm) {
+      const search = searchTerm.toLowerCase();
+      filtered = filtered.filter(t => 
+        t.description.toLowerCase().includes(search) ||
+        t.category.toLowerCase().includes(search)
+      );
+    }
+
+    // Apply category filter
+    if (filterCategory) {
+      filtered = filtered.filter(t => t.category === filterCategory);
+    }
+
+    // Apply date filter based on view mode
+    if (viewMode === 'monthly' && filterMonth) {
+      filtered = filtered.filter(t => {
+        const txDate = new Date(t.date);
+        const txMonth = `${txDate.getFullYear()}-${String(txDate.getMonth() + 1).padStart(2, '0')}`;
+        return txMonth === filterMonth;
+      });
+    } else if (viewMode === 'yearly' && filterYear) {
+      filtered = filtered.filter(t => {
+        const txDate = new Date(t.date);
+        return txDate.getFullYear().toString() === filterYear;
+      });
+    }
+
+    // Sort by date descending (newest first)
+    filtered.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    return filtered;
+  };
+
+  const getPaginatedTransactions = () => {
+    const filtered = getFilteredTransactions();
+    const startIndex = (currentPage - 1) * transactionsPerPage;
+    const endIndex = startIndex + transactionsPerPage;
+    return filtered.slice(startIndex, endIndex);
+  };
+
+  const getFilteredSummary = () => {
+    const filtered = getFilteredTransactions();
+    // Exclude transactions marked as exclude_from_balance
+    const includedInBalance = filtered.filter(t => !t.exclude_from_balance);
+    
+    const income = includedInBalance
+      .filter(t => t.transaction_type === 'income')
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    const expenses = includedInBalance
+      .filter(t => t.transaction_type === 'expense')
+      .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+    
+    return {
+      total_income: income,
+      total_expenses: expenses,
+      balance: income - expenses,
+      transactions_count: filtered.length
+    };
+  };
+
+  const getUniqueCategories = () => {
+    const categories = new Set(transactions.map(t => t.category));
+    return Array.from(categories).sort();
+  };
+
+  const getAvailableMonths = () => {
+    const months = new Set(transactions.map(t => {
+      const date = new Date(t.date);
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    }));
+    return Array.from(months).sort().reverse(); // Newest first
+  };
+
+  const getAvailableYears = () => {
+    const years = new Set(transactions.map(t => new Date(t.date).getFullYear().toString()));
+    return Array.from(years).sort().reverse(); // Newest first
+  };
+
+  const filteredTransactions = getPaginatedTransactions();
+  const filteredSummary = getFilteredSummary();
+  const totalPages = Math.ceil(getFilteredTransactions().length / transactionsPerPage);
+
+  // Recalculate budgets for the currently selected month
+  const getFilteredBudgets = () => {
+    if (viewMode !== 'monthly' || !filterMonth) {
+      return budgets; // Return as-is if not in monthly view
+    }
+
+    // Recalculate spending for each budget based on selected month
+    return budgets.map(budget => {
+      const monthTransactions = transactions.filter(t => {
+        const txDate = new Date(t.date);
+        const txMonth = `${txDate.getFullYear()}-${String(txDate.getMonth() + 1).padStart(2, '0')}`;
+        return txMonth === filterMonth && t.transaction_type === 'expense';
+      });
+
+      const spent = monthTransactions
+        .filter(t => t.category && t.category.toLowerCase() === budget.category.toLowerCase())
+        .reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+      const percentage = budget.monthly_limit > 0 ? (spent / budget.monthly_limit) * 100 : 0;
+
+      return {
+        ...budget,
+        spent,
+        percentage
+      };
+    });
+  };
+
+  const filteredBudgets = getFilteredBudgets();
 
   const fetchFinancialData = async () => {
     try {
@@ -181,6 +330,33 @@ const Finance: React.FC = () => {
     }
   };
 
+  const handleAddBill = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      await api.post('/financial/transaction', {
+        description: billForm.bill_name,
+        amount: -Math.abs(parseFloat(billForm.amount)), // Bills are expenses (negative)
+        category: billForm.category,
+        transaction_type: 'expense',
+        date: billForm.due_date,
+        is_recurring: billForm.is_recurring,
+        bill_name: billForm.bill_name,
+        due_date: billForm.due_date
+      });
+      setShowAddBill(false);
+      setBillForm({
+        bill_name: '',
+        amount: '',
+        category: '',
+        due_date: '',
+        is_recurring: true
+      });
+      fetchFinancialData();
+    } catch (error) {
+      console.error('Failed to add bill:', error);
+    }
+  };
+
   const handleAddGoal = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -211,6 +387,18 @@ const Finance: React.FC = () => {
       fetchFinancialData();
     } catch (error) {
       console.error('Failed to delete transaction:', error);
+    }
+  };
+
+  const handleToggleExclude = async (transaction: Transaction) => {
+    try {
+      await api.put(`/financial/transaction/${transaction.id}`, {
+        ...transaction,
+        exclude_from_balance: !transaction.exclude_from_balance
+      });
+      fetchFinancialData();
+    } catch (error) {
+      console.error('Failed to update transaction:', error);
     }
   };
 
@@ -758,16 +946,48 @@ const Finance: React.FC = () => {
 
         {/* Budget Tracking Section */}
         <div className="mb-2">
-          <div className="flex items-center justify-between mb-2">
-            <h2 className="text-base font-semibold text-zombie-green terminal-glow">📊 BUDGETS</h2>
-            <Button
-              variant="primary"
-              onClick={() => setShowAddBudget(!showAddBudget)}
-              size="sm"
+          <div 
+            className="flex items-center justify-between mb-2 cursor-pointer hover:bg-zombie-dark/30 p-2 rounded"
+            onClick={() => setShowBudgets(!showBudgets)}
+          >
+            <h2 className="text-base font-semibold text-zombie-green terminal-glow">
+              {showBudgets ? '▼' : '▶'} 📊 BUDGETS
+            </h2>
+            <button
+              className="px-3 py-1 text-sm bg-blue-500 text-white font-semibold rounded hover:bg-blue-600"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAddBudget(!showAddBudget);
+              }}
             >
               {showAddBudget ? 'Cancel' : '+ Budget'}
-            </Button>
+            </button>
           </div>
+
+          {showBudgets && (
+            <>
+              {/* Month Filter for Budgets */}
+              {viewMode === 'monthly' && (
+            <Card className="mb-2 p-2">
+              <div className="flex items-center gap-2">
+                <label className="text-xs text-zombie-green font-semibold">Viewing budget for:</label>
+                <select
+                  value={filterMonth}
+                  onChange={(e) => setFilterMonth(e.target.value)}
+                  className="flex-1 p-1 text-sm bg-zombie-dark text-zombie-green border border-zombie-green rounded"
+                >
+                  {getAvailableMonths().map(month => {
+                    const [year, m] = month.split('-');
+                    const date = new Date(parseInt(year), parseInt(m) - 1);
+                    const monthName = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                    return (
+                      <option key={month} value={month}>{monthName}</option>
+                    );
+                  })}
+                </select>
+              </div>
+            </Card>
+          )}
 
           {/* Add Budget Form */}
           {showAddBudget && (
@@ -822,7 +1042,7 @@ const Finance: React.FC = () => {
             </Card>
           ) : (
             <div className="space-y-2 mb-2">
-              {(Array.isArray(budgets) ? budgets.filter(b => b && typeof b === 'object') : []).map((budget, idx) => {
+              {(Array.isArray(filteredBudgets) ? filteredBudgets.filter(b => b && typeof b === 'object') : []).map((budget, idx) => {
                 // Use normalized ratio (0-1) for budget progress, then display as percent
                 let spent = 0;
                 let monthly_limit = 0;
@@ -889,6 +1109,8 @@ const Finance: React.FC = () => {
                 );
               })}
             </div>
+          )}
+            </>
           )}
         </div>
 
@@ -1044,33 +1266,301 @@ const Finance: React.FC = () => {
           )}
         </div>
 
+        {/* Bills Section */}
+        <div className="mb-4">
+          <div 
+            className="flex items-center justify-between mb-2 cursor-pointer hover:bg-zombie-dark/30 p-2 rounded"
+            onClick={() => setShowBills(!showBills)}
+          >
+            <h2 className="text-base font-semibold text-zombie-green terminal-glow">
+              {showBills ? '▼' : '▶'} 💳 RECURRING BILLS
+            </h2>
+            <button
+              className="px-3 py-1 text-sm bg-blue-500 text-white font-semibold rounded hover:bg-blue-600"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAddBill(!showAddBill);
+              }}
+            >
+              {showAddBill ? 'Cancel' : '+ Bill'}
+            </button>
+          </div>
+
+          {showBills && (
+            <>
+              {/* Add Bill Form */}
+              {showAddBill && (
+            <Card className="mb-2 py-3 px-4">
+              <form onSubmit={handleAddBill} className="space-y-2">
+                <h3 className="text-sm font-bold text-zombie-green">ADD RECURRING BILL</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    required
+                    value={billForm.bill_name}
+                    onChange={(e) => setBillForm({ ...billForm, bill_name: e.target.value })}
+                    className="w-full p-2 text-sm bg-zombie-dark text-zombie-green border-2 border-zombie-green rounded terminal-text"
+                    placeholder="Bill Name (e.g., Netflix)"
+                  />
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={billForm.amount}
+                    onChange={(e) => setBillForm({ ...billForm, amount: e.target.value })}
+                    className="w-full p-2 text-sm bg-zombie-dark text-zombie-green border-2 border-zombie-green rounded terminal-text"
+                    placeholder="Amount"
+                  />
+                  <input
+                    type="text"
+                    required
+                    value={billForm.category}
+                    onChange={(e) => setBillForm({ ...billForm, category: e.target.value })}
+                    className="w-full p-2 text-sm bg-zombie-dark text-zombie-green border-2 border-zombie-green rounded terminal-text"
+                    placeholder="Category (e.g., Utilities)"
+                  />
+                  <input
+                    type="date"
+                    required
+                    value={billForm.due_date}
+                    onChange={(e) => setBillForm({ ...billForm, due_date: e.target.value })}
+                    className="w-full p-2 text-sm bg-zombie-dark text-zombie-green border-2 border-zombie-green rounded terminal-text"
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="is_recurring"
+                    checked={billForm.is_recurring}
+                    onChange={(e) => setBillForm({ ...billForm, is_recurring: e.target.checked })}
+                    className="w-4 h-4"
+                  />
+                  <label htmlFor="is_recurring" className="text-sm text-zombie-green">Recurring monthly</label>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    className="flex-1 px-4 py-2 text-sm bg-purple-500 text-white font-semibold rounded hover:bg-purple-600"
+                  >
+                    Add Bill
+                  </button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => setShowAddBill(false)}
+                    size="sm"
+                    className="flex-1"
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            </Card>
+          )}
+
+          {/* Bills List - Show recurring bills from transactions */}
+          <Card className="py-2 px-3">
+            <div className="space-y-2">
+              {transactions
+                .filter(t => t.is_recurring && t.bill_name)
+                .sort((a, b) => new Date(a.due_date || a.date).getTime() - new Date(b.due_date || b.date).getTime())
+                .slice(0, 10) // Show first 10
+                .map(bill => (
+                  <div key={bill.id} className="flex items-center justify-between py-2 border-b border-zombie-green/30 last:border-0">
+                    <div className="flex-1">
+                      <p className="text-sm font-semibold text-zombie-green">{bill.bill_name || bill.description}</p>
+                      <p className="text-xs text-zombie-green/70">
+                        {bill.category} • Due: {formatDate(bill.due_date || bill.date)}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-sm font-bold text-red-400">{formatCurrency(Math.abs(bill.amount))}</p>
+                      <p className="text-xs text-zombie-green">monthly</p>
+                    </div>
+                  </div>
+                ))}
+              {transactions.filter(t => t.is_recurring && t.bill_name).length === 0 && (
+                <p className="text-center text-sm text-zombie-green py-2">
+                  No recurring bills. Click "+ Bill" to add one!
+                </p>
+              )}
+            </div>
+          </Card>
+            </>
+          )}
+        </div>
+
         {/* Transactions List - Spreadsheet Format */}
+        <div className="mt-4">
+          <div 
+            className="flex items-center justify-between mb-2 cursor-pointer hover:bg-zombie-dark/30 p-2 rounded"
+            onClick={() => setShowTransactions(!showTransactions)}
+          >
+            <h3 className="text-base font-bold text-zombie-green terminal-glow">
+              {showTransactions ? '▼' : '▶'} 📊 TRANSACTION LEDGER
+            </h3>
+          </div>
+          
+          {showTransactions && (
+            <>
+              {/* Filter Controls */}
+              <Card className="mb-3 p-3">
+            <div className="space-y-3">
+              {/* View Mode Selector */}
+              <div>
+                <label className="text-xs text-zombie-green font-semibold mb-1 block">View Mode:</label>
+                <div className="flex gap-2">
+                  {(['monthly', 'yearly', 'all'] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => {
+                        setViewMode(mode);
+                        setCurrentPage(1);
+                      }}
+                      className={`px-3 py-1 text-sm rounded font-semibold ${
+                        viewMode === mode
+                          ? 'bg-zombie-green text-zombie-dark'
+                          : 'bg-zombie-dark border border-zombie-green text-zombie-green hover:bg-zombie-green/20'
+                      }`}
+                    >
+                      {mode.charAt(0).toUpperCase() + mode.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Date Filters */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {viewMode === 'monthly' && (
+                  <div>
+                    <label className="text-xs text-zombie-green font-semibold mb-1 block">Month:</label>
+                    <select
+                      value={filterMonth}
+                      onChange={(e) => {
+                        setFilterMonth(e.target.value);
+                        setCurrentPage(1);
+                      }}
+                      className="w-full p-2 text-sm bg-zombie-dark text-zombie-green border border-zombie-green rounded"
+                    >
+                      {getAvailableMonths().map(month => {
+                        const [year, m] = month.split('-');
+                        const date = new Date(parseInt(year), parseInt(m) - 1);
+                        const monthName = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                        return (
+                          <option key={month} value={month}>{monthName}</option>
+                        );
+                      })}
+                    </select>
+                  </div>
+                )}
+
+                {viewMode === 'yearly' && (
+                  <div>
+                    <label className="text-xs text-zombie-green font-semibold mb-1 block">Year:</label>
+                    <select
+                      value={filterYear}
+                      onChange={(e) => {
+                        setFilterYear(e.target.value);
+                        setCurrentPage(1);
+                      }}
+                      className="w-full p-2 text-sm bg-zombie-dark text-zombie-green border border-zombie-green rounded"
+                    >
+                      {getAvailableYears().map(year => (
+                        <option key={year} value={year}>{year}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+
+                <div>
+                  <label className="text-xs text-zombie-green font-semibold mb-1 block">Category:</label>
+                  <select
+                    value={filterCategory}
+                    onChange={(e) => {
+                      setFilterCategory(e.target.value);
+                      setCurrentPage(1);
+                    }}
+                    className="w-full p-2 text-sm bg-zombie-dark text-zombie-green border border-zombie-green rounded"
+                  >
+                    <option value="">All Categories</option>
+                    {getUniqueCategories().map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              {/* Search Bar */}
+              <div>
+                <label className="text-xs text-zombie-green font-semibold mb-1 block">Search:</label>
+                <input
+                  type="text"
+                  value={searchTerm}
+                  onChange={(e) => {
+                    setSearchTerm(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  placeholder="Search description or category..."
+                  className="w-full p-2 text-sm bg-zombie-dark text-zombie-green border border-zombie-green rounded"
+                />
+              </div>
+
+              {/* Filtered Summary */}
+              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zombie-green/30">
+                <div className="text-center">
+                  <p className="text-xs text-zombie-green">Filtered Income</p>
+                  <p className="text-sm font-bold text-green-400">{formatCurrency(filteredSummary.total_income)}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xs text-zombie-green">Filtered Expenses</p>
+                  <p className="text-sm font-bold text-red-400">{formatCurrency(filteredSummary.total_expenses)}</p>
+                </div>
+                <div className="text-center">
+                  <p className="text-xs text-zombie-green">Filtered Balance</p>
+                  <p className={`text-sm font-bold ${filteredSummary.balance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {formatCurrency(filteredSummary.balance)}
+                  </p>
+                </div>
+              </div>
+
+              {/* Transaction Count */}
+              <div className="text-center text-xs text-zombie-green">
+                Showing {filteredTransactions.length} of {filteredSummary.transactions_count} transactions
+                {viewMode !== 'all' && ` (${viewMode} view)`}
+              </div>
+            </div>
+          </Card>
+          
+          {/* Transaction Table */}
         <div className="mb-2">
           <h2 className="text-base font-semibold text-zombie-green terminal-glow mb-2">💳 TRANSACTIONS</h2>
         </div>
         {loading ? (
           <div className="text-center py-4 text-zombie-green text-sm">Loading transactions...</div>
-        ) : transactions.length === 0 ? (
+        ) : filteredTransactions.length === 0 ? (
           <Card className="py-3 px-4">
             <p className="text-center text-sm text-zombie-green">
-              No transactions yet. Click "+ Transaction" to create one!
+              {transactions.length === 0 
+                ? 'No transactions yet. Click "+ Transaction" to create one!'
+                : 'No transactions match your filters. Try adjusting the filters above.'}
             </p>
           </Card>
         ) : (
-          <Card className="mb-2 py-2 px-2 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b-2 border-zombie-green">
-                  <th className="px-2 py-2 text-left text-zombie-green font-bold">Type</th>
-                  <th className="px-2 py-2 text-left text-zombie-green font-bold">Description</th>
-                  <th className="px-2 py-2 text-left text-zombie-green font-bold">Category</th>
-                  <th className="px-2 py-2 text-left text-zombie-green font-bold">Date</th>
-                  <th className="px-2 py-2 text-right text-zombie-green font-bold">Amount</th>
-                  <th className="px-2 py-2 text-center text-zombie-green font-bold">Action</th>
-                </tr>
-              </thead>
-              <tbody>
-                {transactions.map((transaction, idx) => (
+          <>
+            <Card className="mb-2 py-2 px-2 overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b-2 border-zombie-green">
+                    <th className="px-2 py-2 text-left text-zombie-green font-bold">Type</th>
+                    <th className="px-2 py-2 text-left text-zombie-green font-bold">Description</th>
+                    <th className="px-2 py-2 text-left text-zombie-green font-bold">Category</th>
+                    <th className="px-2 py-2 text-left text-zombie-green font-bold">Date</th>
+                    <th className="px-2 py-2 text-right text-zombie-green font-bold">Amount</th>
+                    <th className="px-2 py-2 text-center text-zombie-green font-bold text-xs" title="Exclude from balance calculations">Excl</th>
+                    <th className="px-2 py-2 text-center text-zombie-green font-bold">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredTransactions.map((transaction, idx) => (
                   <tr 
                     key={transaction.id} 
                     className={`border-b border-zombie-green/30 hover:bg-zombie-dark/50 ${
@@ -1100,6 +1590,15 @@ const Finance: React.FC = () => {
                       {formatCurrency(Math.abs(transaction.amount))}
                     </td>
                     <td className="px-2 py-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={transaction.exclude_from_balance || false}
+                        onChange={() => handleToggleExclude(transaction)}
+                        className="w-4 h-4 cursor-pointer accent-zombie-green"
+                        title="Exclude from balance (transfers, reimbursements, etc.)"
+                      />
+                    </td>
+                    <td className="px-2 py-2 text-center">
                       <button
                         onClick={() => handleDeleteTransaction(transaction.id)}
                         className="text-red-500 hover:text-red-700 font-bold text-lg hover:bg-red-500/20 px-2 py-1 rounded"
@@ -1113,7 +1612,46 @@ const Finance: React.FC = () => {
               </tbody>
             </table>
           </Card>
+
+          {/* Pagination Controls */}
+          {totalPages > 1 && (
+            <Card className="mt-2 p-3">
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                  disabled={currentPage === 1}
+                  className={`px-3 py-1 text-sm rounded font-semibold ${
+                    currentPage === 1
+                      ? 'bg-zombie-dark/50 text-zombie-green/50 cursor-not-allowed'
+                      : 'bg-zombie-dark border border-zombie-green text-zombie-green hover:bg-zombie-green hover:text-zombie-dark'
+                  }`}
+                >
+                  ← Previous
+                </button>
+                
+                <div className="text-sm text-zombie-green">
+                  Page {currentPage} of {totalPages}
+                </div>
+                
+                <button
+                  onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                  disabled={currentPage === totalPages}
+                  className={`px-3 py-1 text-sm rounded font-semibold ${
+                    currentPage === totalPages
+                      ? 'bg-zombie-dark/50 text-zombie-green/50 cursor-not-allowed'
+                      : 'bg-zombie-dark border border-zombie-green text-zombie-green hover:bg-zombie-green hover:text-zombie-dark'
+                  }`}
+                >
+                  Next →
+                </button>
+              </div>
+            </Card>
+          )}
+          </>
         )}
+          </>
+        )}
+        </div>
       </div>
     </div>
   );
