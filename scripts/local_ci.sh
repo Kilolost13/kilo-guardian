@@ -89,11 +89,12 @@ run_code_quality() {
         exit 1
     fi
 
-    # Check for import errors
-    if python3 -c "import services.ai_brain.main" 2>/dev/null; then
+    # Check for import errors (basic validation of key services)
+    if python3 -c "import services.ai_brain.main; import services.gateway.main; import services.cam.main" 2>/dev/null; then
         log_success "Import check passed ✓"
     else
-        log_warning "Import errors found (this may be expected if dependencies aren't installed)"
+        log_warning "Import check failed (this may be expected if dependencies aren't installed)"
+        log_info "To fix: pip install -r requirements-ci.txt"
     fi
 }
 

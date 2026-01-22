@@ -37,6 +37,7 @@ jobs:
           done
 
       - name: Run smoke test script
+        # Runs from repository root (default working directory)
         run: |
           chmod +x ./scripts/smoke_test.sh
           ./scripts/smoke_test.sh localhost 9004 8000

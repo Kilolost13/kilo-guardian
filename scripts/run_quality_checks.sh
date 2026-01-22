@@ -31,9 +31,10 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
-# Check if we're in the right directory
-if [ ! -f "scripts/analytics_dashboard.py" ]; then
+# Check if we're in the right directory (look for multiple key indicators)
+if [ ! -f "scripts/analytics_dashboard.py" ] || [ ! -d "services" ] || [ ! -d "frontend" ]; then
     print_error "Please run this script from the project root directory"
+    print_error "Expected structure: scripts/, services/, frontend/ directories"
     exit 1
 fi
 
