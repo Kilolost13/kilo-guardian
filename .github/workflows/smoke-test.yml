@@ -3,7 +3,9 @@ name: Docker Compose smoke test
 on:
   push:
     paths:
-      - 'microservice/**'
+      - 'services/**'
+      - 'infra/docker/**'
+      - 'scripts/**'
   workflow_dispatch: {}
 
 jobs:
@@ -17,13 +19,13 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build and start compose stack
-        working-directory: ./microservice
+        working-directory: ./infra/docker
         run: |
           docker-compose build --parallel
           docker-compose up -d --remove-orphans
 
       - name: Wait for services
-        working-directory: ./microservice
+        working-directory: ./infra/docker
         run: |
           for i in {1..30}; do
             echo "Waiting for ai_brain... ($i)"
@@ -35,13 +37,20 @@ jobs:
           done
 
       - name: Run smoke test script
-        working-directory: ./microservice
         run: |
           chmod +x ./scripts/smoke_test.sh
           ./scripts/smoke_test.sh localhost 9004 8000
 
       - name: Tear down compose
         if: always()
-        working-directory: ./microservice
+        working-directory: ./infra/docker
         run: |
           docker-compose down --volumes --remove-orphans
+      
+      - name: Smoke Test Summary
+        if: always()
+        run: |
+          echo "=== Smoke Test Summary ==="
+          echo "Docker compose build: Check logs above"
+          echo "Services health check: Check ai_brain status above"
+          echo "Smoke test script: Check test results above"
