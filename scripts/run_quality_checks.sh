@@ -32,7 +32,7 @@ print_error() {
 }
 
 # Check if we're in the right directory
-if [ ! -f "microservice/analytics_dashboard.py" ]; then
+if [ ! -f "scripts/analytics_dashboard.py" ]; then
     print_error "Please run this script from the project root directory"
     exit 1
 fi
@@ -40,19 +40,31 @@ fi
 # Function to run tests
 run_tests() {
     print_status "Running comprehensive test suite..."
-    if python3 microservice/test_suite.py; then
-        print_success "All tests passed!"
-        return 0
+    # TODO: Update to use actual test file location or pytest
+    if [ -f "services/integration/test_suite.py" ]; then
+        if python3 services/integration/test_suite.py; then
+            print_success "All tests passed!"
+            return 0
+        else
+            print_error "Some tests failed!"
+            return 1
+        fi
     else
-        print_error "Some tests failed!"
-        return 1
+        print_warning "Test suite not found at services/integration/test_suite.py - running pytest instead"
+        if pytest -v; then
+            print_success "Pytest tests passed!"
+            return 0
+        else
+            print_error "Pytest tests failed!"
+            return 1
+        fi
     fi
 }
 
 # Function to run analytics
 run_analytics() {
     print_status "Generating analytics report..."
-    if python3 microservice/analytics_dashboard.py; then
+    if python3 scripts/analytics_dashboard.py; then
         print_success "Analytics report generated!"
         return 0
     else
@@ -64,24 +76,34 @@ run_analytics() {
 # Function to generate documentation
 generate_docs() {
     print_status "Generating documentation..."
-    if python3 microservice/generate_docs.py; then
-        print_success "Documentation generated!"
-        return 0
+    if [ -f "scripts/generate_docs.py" ]; then
+        if python3 scripts/generate_docs.py; then
+            print_success "Documentation generated!"
+            return 0
+        else
+            print_error "Documentation generation failed!"
+            return 1
+        fi
     else
-        print_error "Documentation generation failed!"
-        return 1
+        print_warning "Documentation generator not found at scripts/generate_docs.py - skipping"
+        return 0
     fi
 }
 
 # Function to run local CI/CD
 run_ci() {
     print_status "Running local CI/CD pipeline..."
-    if ./microservice/local_ci.sh; then
-        print_success "CI/CD pipeline completed!"
-        return 0
+    if [ -f "scripts/local_ci.sh" ]; then
+        if ./scripts/local_ci.sh; then
+            print_success "CI/CD pipeline completed!"
+            return 0
+        else
+            print_error "CI/CD pipeline failed!"
+            return 1
+        fi
     else
-        print_error "CI/CD pipeline failed!"
-        return 1
+        print_warning "Local CI script not found at scripts/local_ci.sh - skipping"
+        return 0
     fi
 }
 
@@ -100,7 +122,7 @@ check_health() {
     if python3 -c "
 import sys
 import os
-sys.path.insert(0, 'microservice')
+sys.path.insert(0, 'services')
 
 # Set up test environment
 os.environ['AI_BRAIN_DB_URL'] = 'sqlite:///:memory:'
@@ -161,7 +183,7 @@ main() {
     fi
 
     # Run CI/CD (optional, as it might be more comprehensive)
-    if [ -f "microservice/local_ci.sh" ]; then
+    if [ -f "scripts/local_ci.sh" ]; then
         if ! run_ci; then
             failed_steps+=("ci_cd")
         fi
