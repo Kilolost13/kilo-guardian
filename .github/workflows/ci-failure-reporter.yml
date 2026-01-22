@@ -1,8 +1,12 @@
 name: CI Failure Reporter
 
+# TODO: This workflow references a "CI" workflow that doesn't exist.
+# Update workflow_run.workflows to match actual workflow names like:
+# "Playwright E2E", "Docker Compose smoke test", "Validate Kubernetes manifests"
+
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["Playwright E2E"]
     types:
       - completed
 
