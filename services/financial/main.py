@@ -1,6 +1,7 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Request
 from prometheus_fastapi_instrumentator import Instrumentator
 from sqlalchemy import text
+from sqlalchemy.sql import func
 from sqlmodel import SQLModel, Session, Field, select
 from typing import Optional, List, Dict
 import os
@@ -92,7 +93,7 @@ async def lifespan(app: FastAPI):
             ensure_column()
         except Exception:
             print("Warning: failed to run migration helper")
-        
+
         # Add new bill-related columns if missing
         try:
             from sqlalchemy import text
@@ -113,7 +114,7 @@ async def lifespan(app: FastAPI):
                     conn.execute(text('ALTER TABLE "transaction" ADD COLUMN bill_name VARCHAR'))
         except Exception as e:
             print(f"[FINANCIAL] Schema migration warning: {e}")
-        
+
         try:
             UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         except Exception:
@@ -137,6 +138,11 @@ async def lifespan(app: FastAPI):
                 print("Nightly maintenance scheduler started")
             except Exception as e:
                 print(f"Warning: failed to start scheduler: {e}")
+
+        # Start budget monitoring loop
+        import asyncio
+        asyncio.create_task(monitor_loop())
+        print("Budget monitoring started - checking every hour")
     except Exception:
         pass
     yield
@@ -466,6 +472,144 @@ def delete_budget(budget_id: int):
         session.delete(budget)
         session.commit()
     return {"status": "deleted"}
+
+
+# Budget Alert System (Stages 2-4)
+async def send_budget_alert(category: str, spent: float, limit: float, percentage: float):
+    """Send budget alert to Reminder service"""
+    try:
+        async with httpx.AsyncClient() as client:
+            # Send to your Reminder service
+            response = await client.post(
+                "http://kilo-reminder:9002/reminder",  # Your reminder service
+                json={
+                    "title": f"⚠️ Budget Alert: {category}",
+                    "message": f"You've spent ${spent:.2f} of ${limit:.2f} ({percentage:.0f}%) this month",
+                    "priority": "high" if percentage >= 100 else "medium",
+                    "category": "budget_alert",
+                    "due_date": datetime.datetime.now().isoformat()
+                }
+            )
+            return response.status_code == 200
+    except Exception as e:
+        print(f"Failed to send budget alert: {e}")
+        return False
+
+
+async def check_budgets_and_alert():
+    """Check all budgets and send alerts if over threshold"""
+    with Session(engine) as session:
+        budgets = session.exec(select(Budget)).all()
+
+        for budget in budgets:
+            # Calculate spent (your existing logic)
+            spent = session.exec(
+                select(func.sum(Transaction.amount))
+                .where(
+                    Transaction.category == budget.category,
+                    Transaction.date >= datetime.datetime.now().replace(day=1).isoformat(),
+                    Transaction.amount < 0  # Only debits (expenses are negative)
+                )
+            ).first() or 0.0
+
+            spent = abs(spent)  # Make it positive for display
+            percentage = (spent / budget.monthly_limit) * 100 if budget.monthly_limit > 0 else 0
+
+            # Alert thresholds
+            if percentage >= 90:  # 90% or more
+                await send_budget_alert(budget.category, spent, budget.monthly_limit, percentage)
+                print(f"ALERT SENT: {budget.category} at {percentage:.0f}%")
+
+
+async def check_balance_and_alert(threshold: float = 500.0):
+    """Check if balance is dangerously low"""
+    with Session(engine) as session:
+        # Get all transactions
+        total_debits = session.exec(
+            select(func.sum(Transaction.amount))
+            .where(Transaction.amount < 0)
+        ).first() or 0.0
+
+        total_credits = session.exec(
+            select(func.sum(Transaction.amount))
+            .where(Transaction.amount > 0)
+        ).first() or 0.0
+
+        # Rough estimate - total_credits are positive income, total_debits are negative expenses
+        estimated_balance = total_credits + total_debits  # debits are already negative
+
+        if estimated_balance < threshold:
+            async with httpx.AsyncClient() as client:
+                try:
+                    await client.post(
+                        "http://kilo-reminder:9002/reminder",
+                        json={
+                            "title": "🚨 LOW BALANCE WARNING",
+                            "message": f"Your balance is approximately ${estimated_balance:.2f}. STOP SPENDING!",
+                            "priority": "critical",
+                            "category": "balance_alert",
+                            "due_date": datetime.datetime.now().isoformat()
+                        }
+                    )
+                    print(f"LOW BALANCE ALERT: ${estimated_balance:.2f}")
+                except Exception as e:
+                    print(f"Failed to send balance alert: {e}")
+
+
+async def check_upcoming_bills():
+    """Alert on bills due in next 2 days"""
+    with Session(engine) as session:
+        # Find recurring transactions
+        transactions = session.exec(
+            select(Transaction)
+            .where(Transaction.is_recurring == True)
+        ).all()
+
+        now = datetime.datetime.now()
+
+        for transaction in transactions:
+            if hasattr(transaction, 'due_date') and transaction.due_date:
+                try:
+                    # Parse due_date if it's a string
+                    if isinstance(transaction.due_date, str):
+                        due_date = datetime.datetime.fromisoformat(transaction.due_date.replace('Z', '+00:00'))
+                    else:
+                        due_date = transaction.due_date
+
+                    days_until_due = (due_date - now).days
+
+                    # Alert 2 days before
+                    if 0 <= days_until_due <= 2:
+                        async with httpx.AsyncClient() as client:
+                            try:
+                                await client.post(
+                                    "http://kilo-reminder:9002/reminder",
+                                    json={
+                                        "title": f"💳 Bill Due: {transaction.bill_name or transaction.description}",
+                                        "message": f"${abs(transaction.amount):.2f} due in {days_until_due} days",
+                                        "priority": "high",
+                                        "category": "bill_reminder",
+                                        "due_date": transaction.due_date if isinstance(transaction.due_date, str) else transaction.due_date.isoformat()
+                                    }
+                                )
+                                print(f"BILL REMINDER: {transaction.description} due in {days_until_due} days")
+                            except Exception as e:
+                                print(f"Failed to send bill reminder: {e}")
+                except Exception as e:
+                    print(f"Error processing bill due date: {e}")
+
+
+async def monitor_loop():
+    """Background monitoring loop - runs every hour"""
+    import asyncio
+    while True:
+        try:
+            await check_budgets_and_alert()
+            await check_balance_and_alert(threshold=500.0)
+            await check_upcoming_bills()
+        except Exception as e:
+            print(f"Monitor loop error: {e}")
+        await asyncio.sleep(3600)  # Check every hour
 
 
 # Goal endpoints
