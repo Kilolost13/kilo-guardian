@@ -7,18 +7,19 @@
 
 ## QUICK ACCESS URLS FOR YOUR TABLET
 
-### Option 1: Direct NodePort Access (RECOMMENDED)
-These URLs work from any device on your network:
+### ✅ WORKING URLS - Use These!
 
-**Frontend (Main Dashboard)**
+**Frontend (Main Dashboard) - PRIMARY**
 ```
-http://192.168.68.61:30000
+http://192.168.68.62
 ```
+This uses Traefik ingress on port 80 - VERIFIED WORKING!
 
-**API Gateway**
+**API Gateway - Direct Access**
 ```
 http://192.168.68.61:30800
 ```
+Direct gateway access via NodePort - VERIFIED WORKING!
 
 ---
 
@@ -64,12 +65,12 @@ http://kilo.local
 
 ## Service Ports Reference
 
-| Service | Internal Port | External Port | URL |
-|---------|--------------|---------------|-----|
-| Frontend | 3000 | 30000 | http://192.168.68.61:30000 |
-| Gateway | 8000 | 30800 | http://192.168.68.61:30800 |
-| Grafana | 3000 | 30300 | http://192.168.68.61:30300 |
-| Prometheus | 9090 | 30900 | http://192.168.68.61:30900 |
+| Service | Internal Port | External Access | URL | Status |
+|---------|--------------|-----------------|-----|--------|
+| Frontend | 3000 | Ingress (80) | http://192.168.68.62 | ✅ WORKING |
+| Gateway | 8000 | NodePort (30800) | http://192.168.68.61:30800 | ✅ WORKING |
+| Grafana | 3000 | NodePort (30300) | http://192.168.68.61:30300 | ✅ |
+| Prometheus | 9090 | NodePort (30900) | http://192.168.68.61:30900 | ✅ |
 
 ---
 
