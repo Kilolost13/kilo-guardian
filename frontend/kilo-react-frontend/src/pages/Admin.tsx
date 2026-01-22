@@ -52,9 +52,9 @@ const Admin: React.FC = () => {
     try {
       const statusRes = await api.get('/admin/status');
       const [medsRes, remindersRes, habitsRes, metricsRes] = await Promise.all([
-        api.get('/meds/'),
-        api.get('/reminder/reminders'),
-        api.get('/habits/'),
+        api.get('/meds/').catch(() => ({ data: [] })),
+        api.get('/reminder/reminders').catch(() => ({ data: { reminders: [] } })),
+        api.get('/habits/').catch(() => ({ data: [] })),
         api.get('/admin/metrics/summary').catch(() => null),
       ]);
 
@@ -162,7 +162,10 @@ const Admin: React.FC = () => {
               {systemStatus && (
                 <>
                   <StatusIndicator status={systemStatus.gateway} label="Gateway" />
-                  <StatusIndicator status={systemStatus.ai_brain} label="AI Brain" />
+                  <StatusIndicator status={systemStatus.k3s} label="K3s Cluster" />
+                  <StatusIndicator status={systemStatus.beelink} label="Beelink Brain" />
+                  <StatusIndicator status={systemStatus.llama} label="Llama AI" />
+                  <StatusIndicator status={systemStatus.ai_brain} label="AI Brain Service" />
                   <StatusIndicator status={systemStatus.meds} label="Medications" />
                   <StatusIndicator status={systemStatus.reminders} label="Reminders" />
                   <StatusIndicator status={systemStatus.finance} label="Finance" />
@@ -258,38 +261,55 @@ const Admin: React.FC = () => {
           {features.showAdvancedFeatures && (
             <div className="mb-6">
               <h2 className="text-2xl font-bold text-zombie-green terminal-glow mb-4">ADMIN ACTIONS:</h2>
-              <div className="grid grid-cols-3 gap-4">
-                <Button onClick={createBackup} variant="primary" size="lg" className="h-24">
-                  💾 CREATE BACKUP
-                </Button>
-                <Button onClick={() => {}} variant="secondary" size="lg" className="h-24">
-                  🔄 RESTORE BACKUP
-                </Button>
+              <div className="grid grid-cols-4 gap-4">
+                {/* Buttons in first column, stacked vertically */}
+                <div className="col-span-1 flex flex-col gap-4">
+                  <Button onClick={createBackup} variant="primary" size="lg" className="h-24">
+                    💾 CREATE BACKUP
+                  </Button>
+                  {!features.showServerCamera && (
+                    <Button onClick={() => {}} variant="secondary" size="lg" className="h-24">
+                      🔄 RESTORE BACKUP
+                    </Button>
+                  )}
+                  <Button onClick={() => {}} variant="danger" size="lg" className="h-24">
+                    🗑️ CLEAR CACHE
+                  </Button>
+                  <Button onClick={() => {}} variant="secondary" size="lg" className="h-24">
+                    📊 VIEW LOGS
+                  </Button>
+                </div>
 
-                {/* Camera Card embedded in Admin Actions (inline feed) - Server only */}
+                {/* Camera Card - spans 3 columns and full height on the right - Server only */}
                 {features.showServerCamera && (
-                  <Card className="h-24 p-2 overflow-hidden">
-                    <div className="w-full h-full flex items-center">
-                      <div className="w-full">
-                        <h3 className="text-sm text-zombie-green font-semibold mb-1">📷 Server Camera</h3>
-                        <div className="text-xs text-gray-400 mb-2">Live feed</div>
-                        <div className="w-full h-12 overflow-hidden rounded-md border border-dark-border relative cursor-pointer" onClick={openCameraModal}>
-                          <WebcamMonitor compact floating={false} widthClass={'w-full'} heightClass={'h-12'} className={'w-full h-12'} onClick={openCameraModal} />
-                          <div className="absolute top-1 right-1 z-50">
-                            <button onClick={(e) => { e.stopPropagation(); openCameraModal(); }} className="px-2 py-1 bg-dark-border text-zombie-green text-xs rounded hover:bg-zombie-green/10">Open</button>
-                          </div>
-                        </div>
+                  <Card className="p-3 overflow-hidden col-span-3">
+                    <div className="w-full h-full flex flex-col">
+                      <div className="flex justify-between items-center mb-2">
+                        <h3 className="text-sm text-zombie-green font-semibold">📷 Server Camera - Live Observation</h3>
+                        <button 
+                          onClick={openCameraModal} 
+                          className="px-3 py-1 bg-zombie-green/20 text-zombie-green text-xs rounded hover:bg-zombie-green/30 border border-zombie-green/50"
+                        >
+                          Expand
+                        </button>
+                      </div>
+                      <div className="flex-1 overflow-hidden rounded-md border border-dark-border relative cursor-pointer" onClick={openCameraModal}>
+                        <WebcamMonitor 
+                          compact={false} 
+                          floating={false} 
+                          widthClass={'w-full'} 
+                          heightClass={'h-full'} 
+                          className={'w-full h-full object-cover'}
+                        />
                       </div>
                     </div>
                   </Card>
                 )}
 
-                <Button onClick={() => {}} variant="danger" size="lg" className="h-24">
-                  🗑️ CLEAR CACHE
-                </Button>
-                <Button onClick={() => {}} variant="secondary" size="lg" className="h-24">
-                  📊 VIEW LOGS
-                </Button>
+                {!features.showServerCamera && (
+                  <>
+                  </>
+                )}
               </div>
             </div>
           )}

@@ -255,17 +255,22 @@ async def admin_ai_brain_metrics(request: Request):
 
 @app.get("/admin/status")
 async def admin_status():
-    """Aggregate health status from all backend services"""
+    """Aggregate health status from all backend services + k3s + beelink"""
     import httpx
+    import subprocess
     from datetime import datetime
+    from kubernetes import client, config
+    from kubernetes.client.rest import ApiException
 
     results = {}
-    async with httpx.AsyncClient(timeout=2.0) as client:
+    
+    # Check backend services
+    async with httpx.AsyncClient(timeout=2.0) as client_http:
         for name, service_url in SERVICE_URLS.items():
             svc_entry = {"ok": False, "checked_at": datetime.utcnow().isoformat(), "message": None}
             health_url = f"{service_url.rstrip('/')}/health"
             try:
-                resp = await client.get(health_url)
+                resp = await client_http.get(health_url)
                 svc_entry["ok"] = resp.status_code < 400
                 try:
                     svc_entry["message"] = resp.json()
@@ -275,6 +280,54 @@ async def admin_status():
                 svc_entry["message"] = str(e)
 
             results[name] = svc_entry
+        
+        # Check Beelink status
+        beelink_host = os.getenv("BEELINK_HOST", "192.168.68.51")
+        try:
+            result = subprocess.run(
+                ["ping", "-c", "1", "-W", "2", beelink_host],
+                capture_output=True, timeout=3
+            )
+            beelink_online = result.returncode == 0
+            results["beelink"] = {
+                "ok": beelink_online,
+                "checked_at": datetime.utcnow().isoformat(),
+                "message": {"status": "online" if beelink_online else "offline", "host": beelink_host}
+            }
+            
+            # Check llama.cpp if beelink is online
+            if beelink_online:
+                llama_url = f"http://{beelink_host}:11434/health"
+                try:
+                    resp = await client_http.get(llama_url)
+                    results["llama"] = {
+                        "ok": resp.status_code < 400,
+                        "checked_at": datetime.utcnow().isoformat(),
+                        "message": {"status": "running", "url": llama_url}
+                    }
+                except Exception:
+                    results["llama"] = {"ok": False, "checked_at": datetime.utcnow().isoformat(), "message": "Not responding"}
+            else:
+                results["llama"] = {"ok": False, "checked_at": datetime.utcnow().isoformat(), "message": "Beelink offline"}
+        except Exception as e:
+            results["beelink"] = {"ok": False, "checked_at": datetime.utcnow().isoformat(), "message": str(e)}
+            results["llama"] = {"ok": False, "checked_at": datetime.utcnow().isoformat(), "message": "Check failed"}
+    
+    # Infer k3s status from service health (simpler than K8s API which isn't accessible)
+    # Count healthy services as a proxy for pod health
+    services_checked = len(results)
+    services_healthy = sum(1 for v in results.values() if v.get("ok", False))
+    
+    results["k3s"] = {
+        "ok": services_healthy >= (services_checked * 0.5),  # At least 50% healthy
+        "checked_at": datetime.utcnow().isoformat(),
+        "message": {
+            "status": "inferred_from_services",
+            "services_total": services_checked,
+            "services_healthy": services_healthy,
+            "note": "Pod counts unavailable (K8s API not accessible from pod)"
+        }
+    }
 
     # Provide top-level boolean flags for backward compatibility
     out = {}
@@ -376,6 +429,20 @@ async def admin_metrics_summary(request: Request):
             results[name] = entry
 
     return {"services": results, "generated_at": datetime.utcnow().isoformat()}
+
+
+# Duplicate admin routes with /api prefix for compatibility with frontend
+@app.get("/api/admin/status")
+async def api_admin_status():
+    """Alias for /admin/status to support frontend routing through /api"""
+    return await admin_status()
+
+
+@app.get("/api/admin/metrics/summary")
+async def api_admin_metrics_summary(request: Request):
+    """Alias for /admin/metrics/summary to support frontend routing through /api"""
+    return await admin_metrics_summary(request)
+
 
 async def _proxy(request: Request, service: str, path: str):
     service_url = SERVICE_URLS.get(service)

@@ -85,7 +85,7 @@ export interface ProgressData {
 
 // Missing types that are being imported
 export interface SystemStatus {
-  status: 'online' | 'offline' | 'maintenance';
+  status: 'online' | 'offline' | 'maintenance' | 'degraded';
   uptime: number;
   memoryUsage: number;
   cpuUsage: number;
@@ -96,6 +96,9 @@ export interface SystemStatus {
   reminders: boolean;
   finance: boolean;
   habits: boolean;
+  k3s?: boolean;
+  beelink?: boolean;
+  llama?: boolean;
 }
 
 export interface CoachingInsight {

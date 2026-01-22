@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    kompose.cmd: kompose convert -f docker-compose.yml -o /home/kilo/Desktop/Kilo_Ai_microservice/k3s-kompose/
+    kompose.version: 1.34.0 (cbf2835db)
+  labels:
+    io.kompose.service: ai-brain
+  name: ai-brain
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      io.kompose.service: ai-brain
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        kompose.cmd: kompose convert -f docker-compose.yml -o /home/kilo/Desktop/Kilo_Ai_microservice/k3s-kompose/
+        kompose.version: 1.34.0 (cbf2835db)
+      labels:
+        io.kompose.service: ai-brain
+    spec:
+      containers:
+        - args:
+            - uvicorn
+            - ai_brain.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "9004"
+          env:
+            - name: ALLOW_NETWORK
+              value: "false"
+            - name: LIBRARY_URL
+              value: http://library_of_truth:9006
+            - name: LLM_PROVIDER
+              value: ollama
+            - name: METRICS_TOKEN
+              value: placeholder-key
+            - name: OLLAMA_MODEL
+              value: llama3.1:8b
+            - name: OLLAMA_URL
+              value: http://ollama:11434
+            - name: STT_PROVIDER
+              value: none
+            - name: TTS_PROVIDER
+              value: none
+          image: kilo/ai_brain:latest
+          livenessProbe:
+            exec:
+              command:
+                - python
+                - -c
+                - import sys,urllib.request as u; sys.exit(0) if u.urlopen('http://localhost:9004/status',timeout=3).getcode()<400 else sys.exit(1)
+            failureThreshold: 5
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 3
+          name: kilo-ai-brain
+          ports:
+            - containerPort: 9004
+              protocol: TCP
+          volumeMounts:
+            - mountPath: /data
+              name: ai-brain-data
+      restartPolicy: Always
+      volumes:
+        - name: ai-brain-data
+          persistentVolumeClaim:
+            claimName: ai-brain-data

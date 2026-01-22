@@ -11,10 +11,13 @@ export const api = axios.create({
 
 // Add auth token if available
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('admin_token');
-  if (token) {
-    config.headers['X-Admin-Token'] = token;
+  let token = localStorage.getItem('admin_token');
+  // Default token if not set
+  if (!token) {
+    token = 'kilo-secure-admin-2024';
+    localStorage.setItem('admin_token', token);
   }
+  config.headers['X-Admin-Token'] = token;
   return config;
 });
 

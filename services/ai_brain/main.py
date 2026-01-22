@@ -848,6 +848,76 @@ def ingest_cam_activity(payload: Dict[str, Any], background_tasks: BackgroundTas
         pass
     return {'status': 'ok', 'suggestions': suggestions}
 
+
+@app.post('/ingest/activity_session')
+def ingest_activity_session(payload: Dict[str, Any], background_tasks: BackgroundTasks = None):
+    """
+    Receive completed activity sessions from cam with duration tracking.
+    
+    Creates a memory entry and optionally a habit entry for long activities.
+    Used for learning daily patterns: how long user watches TV, sleeps, works, etc.
+    """
+    activity = payload.get('activity', 'unknown')
+    duration = payload.get('duration_seconds', 0)
+    timestamp = payload.get('timestamp')
+    location = payload.get('location', 'unknown')
+    camera_id = payload.get('camera_id', 'unknown')
+    
+    # Log to activity history
+    user_state['activity_log'].append({
+        'timestamp': timestamp,
+        'activity': activity,
+        'duration_seconds': duration,
+        'location': location,
+        'completed': True
+    })
+    
+    # Create memory entry
+    try:
+        Memory = _get_memory_model()
+        if Memory is not None:
+            s = get_session()
+            duration_min = duration / 60
+            txt = f"Activity: {activity} for {duration_min:.1f} minutes in {location} at {timestamp}"
+            emb = _embed_text(txt)
+            metadata = {
+                'activity': activity,
+                'duration_seconds': duration,
+                'duration_minutes': duration_min,
+                'location': location,
+                'camera_id': camera_id,
+                'completed': True
+            }
+            mem = Memory(
+                source="cam_activity_tracker",
+                modality="text",
+                text_blob=txt,
+                metadata_json=json.dumps(metadata),
+                embedding_json=json.dumps(emb)
+            )
+            s.add(mem)
+            s.commit()
+            s.refresh(mem)
+    except Exception as e:
+        print(f"Failed to create memory for activity session: {e}")
+    
+    # For significant activities (>5 min), create/update a habit entry
+    if duration > 300:  # 5 minutes
+        try:
+            habits_url = os.getenv('HABITS_URL', 'http://kilo-habits:9000')
+            habit_data = {
+                'name': f"{activity.replace('_', ' ').title()}",
+                'category': 'daily_activity',
+                'notes': f"Auto-tracked from camera in {location}",
+                'duration_minutes': int(duration / 60)
+            }
+            requests.post(f"{habits_url}/record-activity", json=habit_data, timeout=2)
+        except Exception as e:
+            print(f"Failed to create habit entry: {e}")
+    
+    return {'status': 'ok', 'duration_logged': duration}
+
+
 @app.post("/reminder/ack")
 def acknowledge_reminder(reminder: Reminder):
     for r in user_state["reminders"]:

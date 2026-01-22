@@ -136,6 +136,9 @@ def list_habits():
                 "frequency": h.frequency,
                 "target_count": h.target_count,
                 "active": h.active,
+                "med_id": h.med_id,
+                "preferred_times": h.preferred_times,
+                "created_at": h.created_at,
                 "completions": [
                     {
                         "id": c.id,

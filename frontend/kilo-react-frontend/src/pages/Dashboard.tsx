@@ -231,14 +231,28 @@ const Dashboard: React.FC = () => {
           }
         });
 
-        // Process habits (distribute throughout day)
+        // Process habits (only add if they have preferred_times and aren't already in reminders)
         const habits = Array.isArray(habitsRes.data) ? habitsRes.data : [];
-        habits.forEach((h: any, idx: number) => {
+        const reminderTexts = new Set(reminders.map((r: any) => r.text));
+        
+        habits.forEach((h: any) => {
+          // Skip if this habit is already covered by a reminder
+          if (reminderTexts.has(h.name) || reminderTexts.has(`Take ${h.name}`)) {
+            return;
+          }
+          
           if (h.active && h.frequency === 'daily') {
-            const event = { type: 'habit', icon: '✅', text: h.name };
-            if (idx % 3 === 0) morning.push(event);
-            else if (idx % 3 === 1) afternoon.push(event);
-            else evening.push(event);
+            // If habit has preferred_times, use those
+            if (h.preferred_times) {
+              const times = h.preferred_times.split(',');
+              times.forEach((time: string) => {
+                const hour = parseInt(time.split(':')[0]);
+                const event = { type: 'habit', icon: '✅', text: h.name, time: `${dateStr}T${time}` };
+                if (hour < 12) morning.push(event);
+                else if (hour < 17) afternoon.push(event);
+                else evening.push(event);
+              });
+            }
           }
         });
 
@@ -491,11 +505,12 @@ const Dashboard: React.FC = () => {
                 setSelectedDay(day);
                 setShowDayModal(true);
               }}
-              className={`border rounded-lg p-2 cursor-pointer transition-all hover:scale-105 ${
+              className={`border rounded-lg p-3 cursor-pointer transition-all hover:scale-105 ${
                 day.isToday 
                   ? 'border-zombie-green bg-zombie-green/10 shadow-lg hover:shadow-zombie-green/50' 
                   : 'border-gray-700 bg-gray-800/50 hover:border-gray-500'
               }`}
+              style={{ minHeight: 'fit-content' }}
             >
               {/* Day Header */}
               <div className="text-center mb-2 pb-2 border-b border-gray-700">
@@ -516,7 +531,7 @@ const Dashboard: React.FC = () => {
                   ) : (
                     <>
                       {day.morningPreview.map((event: any, i: number) => (
-                        <div key={i} className="text-xs text-gray-300 truncate">
+                        <div key={i} className="text-xs text-gray-300 break-words leading-tight">
                           {event.icon} {event.text}
                         </div>
                       ))}
@@ -537,7 +552,7 @@ const Dashboard: React.FC = () => {
                   ) : (
                     <>
                       {day.afternoonPreview.map((event: any, i: number) => (
-                        <div key={i} className="text-xs text-gray-300 truncate">
+                        <div key={i} className="text-xs text-gray-300 break-words leading-tight">
                           {event.icon} {event.text}
                         </div>
                       ))}
@@ -558,7 +573,7 @@ const Dashboard: React.FC = () => {
                   ) : (
                     <>
                       {day.eveningPreview.map((event: any, i: number) => (
-                        <div key={i} className="text-xs text-gray-300 truncate">
+                        <div key={i} className="text-xs text-gray-300 break-words leading-tight">
                           {event.icon} {event.text}
                         </div>
                       ))}

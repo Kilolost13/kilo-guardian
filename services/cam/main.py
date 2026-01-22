@@ -1767,20 +1767,161 @@ from multi_camera_manager import (
     camera_manager
 )
 
+# Continuous observation state
+observation_thread = None
+observation_running = False
+last_activities = {}  # camera_id -> {activity, start_time, duration}
+
+
+def continuous_observation_loop():
+    """
+    Background thread that continuously observes user activities from all cameras.
+    
+    - Captures frames every 30 seconds from each active camera
+    - Analyzes activity (sitting, watching TV, sleeping, cooking, etc.)
+    - Tracks activity duration
+    - Sends observations to AI brain for learning
+    - Creates habits entries when activities complete
+    """
+    global observation_running, last_activities
+    
+    logger.info("🎥 Starting continuous observation system...")
+    observation_interval = 30  # seconds between observations
+    
+    while observation_running:
+        try:
+            # Get the main webcam frame
+            cap = get_webcam_capture()
+            if cap and cap.isOpened():
+                ret, frame = cap.read()
+                if ret:
+                    # Analyze the scene
+                    try:
+                        objects = detect_objects(frame)
+                        pose_data = extract_pose_from_image(frame)
+                        posture = classify_posture(pose_data) if pose_data else "unknown"
+                        activity_result = classify_activity(objects, posture, pose_data)
+                        
+                        activity = activity_result['activity'] if isinstance(activity_result, dict) else activity_result
+                        confidence = activity_result.get('confidence', 0.5) if isinstance(activity_result, dict) else 0.5
+                        
+                        current_time = datetime.datetime.utcnow()
+                        camera_id = "usb_0"
+                        
+                        # Track activity duration
+                        if camera_id in last_activities:
+                            prev_activity = last_activities[camera_id]['activity']
+                            start_time = last_activities[camera_id]['start_time']
+                            
+                            if prev_activity == activity:
+                                # Same activity continuing - update duration
+                                duration = (current_time - start_time).total_seconds()
+                                last_activities[camera_id]['duration'] = duration
+                            else:
+                                # Activity changed - send completed activity to AI brain
+                                completed_duration = (current_time - start_time).total_seconds()
+                                
+                                # Only log activities longer than 60 seconds
+                                if completed_duration > 60:
+                                    payload = {
+                                        'timestamp': current_time.isoformat(),
+                                        'camera_id': camera_id,
+                                        'activity': prev_activity,
+                                        'duration_seconds': completed_duration,
+                                        'location': 'main_room',
+                                        'completed': True
+                                    }
+                                    
+                                    try:
+                                        requests.post(
+                                            os.getenv('AI_BRAIN_URL', 'http://ai_brain:9004') + '/ingest/activity_session',
+                                            json=payload,
+                                            timeout=2
+                                        )
+                                        logger.info(f"📊 Activity logged: {prev_activity} for {completed_duration/60:.1f} minutes")
+                                    except Exception as e:
+                                        logger.error(f"Failed to send activity session to AI brain: {e}")
+                                
+                                # Start tracking new activity
+                                last_activities[camera_id] = {
+                                    'activity': activity,
+                                    'start_time': current_time,
+                                    'duration': 0
+                                }
+                        else:
+                            # First observation for this camera
+                            last_activities[camera_id] = {
+                                'activity': activity,
+                                'start_time': current_time,
+                                'duration': 0
+                            }
+                        
+                        # Send current observation to AI brain
+                        observation_payload = {
+                            'timestamp': current_time.isoformat(),
+                            'camera_id': camera_id,
+                            'activity': activity,
+                            'confidence': confidence,
+                            'posture': posture,
+                            'objects': [obj['class'] for obj in objects[:5]],  # Top 5 objects
+                            'location': 'main_room',
+                            'duration_so_far': last_activities[camera_id]['duration']
+                        }
+                        
+                        try:
+                            requests.post(
+                                os.getenv('AI_BRAIN_URL', 'http://ai_brain:9004') + '/ingest/cam_activity',
+                                json=observation_payload,
+                                timeout=2
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to send observation to AI brain: {e}")
+                        
+                        logger.debug(f"👁️  Observed: {activity} ({confidence:.2f}) - {posture}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error analyzing frame: {e}")
+            
+            # Sleep until next observation
+            time.sleep(observation_interval)
+            
+        except Exception as e:
+            logger.error(f"Observation loop error: {e}")
+            time.sleep(5)  # Brief pause on error
+    
+    logger.info("🛑 Continuous observation system stopped")
+
+
 @app.on_event("startup")
 async def startup_external_cameras():
     """Initialize external camera system on startup"""
+    global observation_thread, observation_running
+    
     logger.info("Initializing external camera monitoring system...")
 
     # Auto-detect cameras (can be overridden by config)
     detected = camera_manager.detect_cameras(max_cameras=10)
     logger.info(f"Detected {len(detected)} external cameras: {detected}")
+    
+    # Start continuous observation thread
+    observation_running = True
+    observation_thread = threading.Thread(target=continuous_observation_loop, daemon=True)
+    observation_thread.start()
+    logger.info("✅ Continuous observation thread started")
 
 
 @app.on_event("shutdown")
 async def shutdown_external_cameras():
     """Cleanup camera resources on shutdown"""
+    global observation_running
+    
     logger.info("Shutting down external camera system...")
+    
+    # Stop observation thread
+    observation_running = False
+    if observation_thread:
+        observation_thread.join(timeout=5)
+    
     camera_manager.stop()
 
 

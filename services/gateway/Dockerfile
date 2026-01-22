@@ -1,5 +1,16 @@
 FROM python:3.11-slim
 WORKDIR /app
+
+# Install kubectl, ping, and curl for system checks
+RUN apt-get update && apt-get install -y \
+    curl \
+    iputils-ping \
+    && curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+    && chmod +x kubectl \
+    && mv kubectl /usr/local/bin/kubectl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY pyproject.toml .
 RUN pip install --upgrade pip && pip install poetry && poetry config virtualenvs.create false && poetry install --no-interaction --no-root
 COPY . .

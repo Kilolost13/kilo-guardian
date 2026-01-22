@@ -598,6 +598,18 @@ async def create_series(payload: dict):
 
     created = []
     with Session(engine) as session:
+        # Delete existing reminders for this med_id to avoid duplicates
+        existing = session.exec(
+            select(Reminder).where(Reminder.text.like(f"Take {name}%"))
+        ).all()
+        for r in existing:
+            try:
+                _scheduler.remove_job(f"reminder_{r.id}")
+            except:
+                pass
+            session.delete(r)
+        session.commit()
+        
         # build reminder times
         if times:
             when_list = []
