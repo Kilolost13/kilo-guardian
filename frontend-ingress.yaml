@@ -1,24 +1,112 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
+  name: gateway-ingress
+  namespace: default
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.priority: "10"
+spec:
+  ingressClassName: traefik
+  rules:
+  - http:
+      paths:
+      # API routes go to gateway
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8000
+      # Service routes (without /api prefix) go to gateway
+      - path: /reminder
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8000
+      - path: /habits
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8000
+      - path: /financial
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8000
+      - path: /ai_brain
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8000
+      - path: /meds
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8000
+      - path: /voice
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8000
+      - path: /cam
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8000
+      - path: /admin
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8000
+      # WebSocket support
+      - path: /socket.io
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              number: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
   name: frontend-ingress
   namespace: default
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: web
+    traefik.ingress.kubernetes.io/router.priority: "1"
 spec:
+  ingressClassName: traefik
   rules:
-  - host: kilo.local
-    http:
+  - http:
       paths:
-      - path: /
+      # Frontend static assets - high priority
+      - path: /static
         pathType: Prefix
         backend:
           service:
             name: frontend
             port:
               number: 3000
-  - http:
-      paths:
+      # Frontend root - lowest priority (catch-all)
       - path: /
         pathType: Prefix
         backend:

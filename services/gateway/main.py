@@ -587,13 +587,19 @@ async def proxy_all_api(request: Request, service: str, path: str):
 async def proxy_root_api(request: Request, service: str):
     return await _proxy(request, service, "")
 
-# NOTE: Catch-all routes disabled to allow Socket.IO mount at /socket.io
-# All services should be accessed via /api/ prefix
-# @app.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
-# async def proxy_all(request: Request, service: str, path: str):
-#     return await _proxy(request, service, path)
+# NOTE: Catch-all routes enabled but exclude socket.io to allow WebSocket connections
+# Frontend can call either /api/service or /service directly
+@app.api_route("/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy_all(request: Request, service: str, path: str):
+    # Don't proxy socket.io through this route - let it be handled separately
+    if service == "socket.io":
+        raise HTTPException(status_code=404, detail="Not found")
+    return await _proxy(request, service, path)
 
-# @app.api_route("/{service}", methods=["GET", "POST", "PUT", "DELETE"])
-# async def proxy_root(request: Request, service: str):
-#     return await _proxy(request, service, "")
+@app.api_route("/{service}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy_root(request: Request, service: str):
+    # Don't proxy socket.io through this route - let it be handled separately
+    if service == "socket.io":
+        raise HTTPException(status_code=404, detail="Not found")
+    return await _proxy(request, service, "")
 
