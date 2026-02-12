@@ -474,6 +474,7 @@ async def chat_json(req: ChatRequest):
     Stores the conversation for future retrieval.
     """
     # Check for special memory commands
+    print(f"🔥 /chat called! message={req.message[:30]}", flush=True)
     message = req.message.strip()
 
     # /remember command - explicitly store a memory
@@ -541,13 +542,15 @@ async def chat_json(req: ChatRequest):
         s = get_session()
 
         # Generate RAG response
-        rag_result = generate_rag_response(
+        print("🔥 About to call generate_rag_response", flush=True)
+        rag_result = await generate_rag_response(
             user_query=req.message,
             session=s,
             max_context_memories=5
         )
 
         response_text = rag_result["response"]
+        print(f"🔥 RAG completed: {response_text[:50]}", flush=True)
 
         # Store this conversation turn as a memory
         try:
@@ -1218,7 +1221,7 @@ Please extract the following fields if available:
 
 Return ONLY a JSON object with these fields. If a field is not found, use null."""
 
-            rag_result = generate_rag_response(
+            rag_result = await generate_rag_response(
                 user_query=prompt,
                 session=s,
                 max_context_memories=0  # Don't need memory context for prescription parsing
@@ -1314,7 +1317,7 @@ Respond with a JSON object containing:
 - suggestions: list of improvement suggestions
 - anomalies: list of any suspicious transactions"""
             
-            rag_result = generate_rag_response(
+            rag_result = await generate_rag_response(
                 user_query=prompt,
                 session=s,
                 max_context_memories=0
@@ -1625,3 +1628,38 @@ async def get_goal_templates():
 
 
 # ===== END PHASE 3 & 4 FEATURES =====
+
+@app.post("/chat/llm")
+async def chat_llm_direct(req: ChatRequest):
+    """Direct LLM chat bypassing RAG - uses distributed Ollama"""
+    try:
+        print("🚀 Direct LLM call", flush=True)
+        import httpx
+        
+        ollama_url = os.getenv("OLLAMA_URL", "http://kilo-ray-serve:8000")
+        model = os.getenv("OLLAMA_MODEL", "llama3:8b")
+        
+        prompt = f"""You are Kilo, Kyle's helpful AI assistant.
+
+User: {req.message}
+
+Kilo:"""
+        
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            print(f"🚀 Calling {ollama_url}/api/generate", flush=True)
+            resp = await client.post(
+                f"{ollama_url.rstrip('/')}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False
+                }
+            )
+            result = resp.json()
+            response_text = result.get("response", "Error: no response")
+            print(f"🚀 Got {len(response_text)} chars", flush=True)
+            
+        return ChatResponse(response=response_text, context=None)
+    except Exception as e:
+        print(f"❌ Error: {e}", flush=True)
+        return ChatResponse(response=f"Error: {str(e)}", context=None)

@@ -13,7 +13,7 @@ from typing import Optional, List, Dict, Any
 logger = logging.getLogger(__name__)
 
 
-def generate_rag_response(
+async def generate_rag_response(
     user_query: str,
     session,
     max_context_memories: int = 5,
@@ -102,7 +102,7 @@ Kilo's Response:"""
     response_text = ""
     
     if llm_provider == "ollama":
-        response_text = _generate_ollama_response(augmented_prompt, model)
+        response_text = await _generate_ollama_response(augmented_prompt, model)
     elif llm_provider == "library":
         # Fallback: search library of truth instead
         response_text = _generate_library_response(user_query)
@@ -117,7 +117,7 @@ Kilo's Response:"""
     }
 
 
-def _generate_ollama_response(prompt: str, model: Optional[str] = None) -> str:
+async def _generate_ollama_response(prompt: str, model: Optional[str] = None) -> str:
     """
     Generate response using Ollama HTTP API or OpenAI-compatible API (llama.cpp server).
     
