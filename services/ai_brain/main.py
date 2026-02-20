@@ -3695,6 +3695,7 @@ async def chat_llm_direct(req: ChatRequest):
     Faster than RAG, uses personality prompt.
     """
     try:
+        logging.info(f"[CHAT/LLM] START - Message: {req.message}")
         # Quick keyword checks to avoid expensive service calls
         message_lower = req.message.lower()
 
@@ -3716,11 +3717,8 @@ async def chat_llm_direct(req: ChatRequest):
             if habit_result.get('handled'):
                 return ChatResponse(response=habit_result['response'], context=req.context)
 
-        # Only check financial if message contains money/spending keywords
-        if any(word in message_lower for word in ['spend', 'spent', 'money', 'dollar', 'budget', 'finance', 'transaction', 'cost', 'paid', 'payment']):
-            financial_result = await handle_financial_chat(req.message)
-            if financial_result.get('handled'):
-                return ChatResponse(response=financial_result['response'], context=req.context)
+        # Financial queries now handled by Gemini function calling (kilo_tools.py)
+        # Removed old handle_financial_chat() intercept to allow days_back and category breakdown
 
         # Fetch daily briefing for context
         briefing_data = {}
@@ -3745,8 +3743,7 @@ async def chat_llm_direct(req: ChatRequest):
                 context_parts.append(f"Medications: {meds['total']} total ({', '.join(meds.get('list', [])[:3])})")
             if habits.get('daily_total'):
                 context_parts.append(f"Daily habits: {habits['daily_total']} tracked ({', '.join(habits.get('list', [])[:3])})")
-            if spending.get('this_month'):
-                context_parts.append(f"Spending: ${spending['this_month']:.2f} this month ({spending.get('transaction_count', 0)} transactions)")
+            # Spending removed - force Gemini to call get_spending_summary function for accurate data with category breakdowns
             if reminders.get('total_pending'):
                 context_parts.append(f"Reminders: {reminders['total_pending']} pending")
 
@@ -3775,6 +3772,12 @@ Your capabilities:
 - **See email content** (Gmail subjects, senders, bills, amounts) and proactively remind about payments
 - **Monitor for risks** and actively intervene - watch for sketchy downloads, questionable commands, potential legal issues, security mistakes, or anything that could get Kyle in trouble
 - **Detect context** from what Kyle is working on (Wireshark, pentesting, code, articles)
+
+Financial data guidelines:
+- When showing spending data, ALWAYS include category breakdowns if available in the function result
+- If the result has "by_category" data, show the top 3-5 categories with amounts
+- When user asks for date ranges like "last 15 days", use the days_back parameter
+- Format category breakdowns clearly: "You spent $X on Y, $Z on W, etc."
 
 How you work:
 - Desktop observations show you what Kyle is currently doing (email, browsing, coding, etc.)
