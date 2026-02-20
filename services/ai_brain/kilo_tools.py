@@ -119,6 +119,21 @@ KILO_FUNCTION_DECLARATIONS = [
             "required": ["query"]
         }
     }
+,
+    {
+        "name": "search_web",
+        "description": "Search the internet for current information, news, weather, prices, or facts not in the Library of Truth. Use when Kyle asks about current events, real-time data, or external information.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search query (e.g., 'Dallas weather today', 'Bitcoin current price', 'latest SpaceX news')"
+                }
+            },
+            "required": ["query"]
+        }
+    }
 ]
 
 
@@ -157,6 +172,9 @@ async def execute_tool_call(tool_name: str, parameters: Dict[str, Any]) -> Dict[
 
         elif tool_name == "search_library":
             return await _search_library(parameters)
+
+        elif tool_name == "search_web":
+            return await _search_web(parameters)
 
         else:
             return {"error": f"Unknown tool: {tool_name}"}
@@ -398,4 +416,79 @@ async def _search_library(params: Dict[str, Any]) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"search_library error: {e}")
+        return {"error": str(e)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# WEB SEARCH FUNCTION
+# ═══════════════════════════════════════════════════════════════════════════
+
+async def _search_web(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Search the internet using Brave Search API"""
+    try:
+        import os
+        
+        query = params.get("query", "")
+        if not query:
+            return {"error": "Missing query parameter"}
+        
+        api_key = os.environ.get("BRAVE_API_KEY", "")
+        if not api_key:
+            return {"error": "BRAVE_API_KEY not configured. Set environment variable."}
+        
+        logger.info(f"🌐 Searching web for: {query}")
+        
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                "https://api.search.brave.com/res/v1/web/search",
+                params={
+                    "q": query,
+                    "count": 5,  # Top 5 results
+                    "search_lang": "en",
+                    "country": "us"
+                },
+                headers={
+                    "Accept": "application/json",
+                    "X-Subscription-Token": api_key
+                }
+            )
+            
+            if resp.status_code == 401:
+                return {"error": "Invalid BRAVE_API_KEY. Check your API key."}
+            elif resp.status_code == 429:
+                return {"error": "Rate limit exceeded. You've used your monthly quota."}
+            elif resp.status_code != 200:
+                return {"error": f"Search failed with status {resp.status_code}"}
+            
+            data = resp.json()
+            
+            # Extract useful results
+            results = []
+            web_results = data.get("web", {}).get("results", [])
+            
+            for result in web_results[:5]:
+                results.append({
+                    "title": result.get("title", ""),
+                    "url": result.get("url", ""),
+                    "description": result.get("description", ""),
+                    "age": result.get("age", "")
+                })
+            
+            if not results:
+                return {
+                    "results": [],
+                    "message": f"No results found for '{query}'",
+                    "query": query
+                }
+            
+            logger.info(f"✅ Found {len(results)} results for: {query}")
+            
+            return {
+                "results": results,
+                "query": query,
+                "count": len(results)
+            }
+            
+    except Exception as e:
+        logger.error(f"search_web error: {e}", exc_info=True)
         return {"error": str(e)}
