@@ -1,625 +1,366 @@
 """
-ML Engine Microservice for Kilo AI
+Kilo ML Engine - Learns Kyle's behavioral patterns from real data.
 
-This service implements machine learning models that learn from Kyle's patterns:
-- Habit completion prediction
-- Optimal reminder timing
-- Pattern detection and insights
+Trains nightly from:
+- Habit completions (kilo-habits:9000)
+- Medications taken (kilo-meds:9000)  
+- Financial transactions (kilo-financial:9005)
 
-The models train nightly and provide predictions in real-time.
+Provides:
+- /insights  - pattern analysis Kilo reads from chat
+- /predict/habit/{id} - should Kilo remind about this habit now?
+- /learn - trigger immediate retraining
+- /health, /status
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, BackgroundTasks
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
-import datetime
-import os
+import httpx
+import asyncio
 import json
-import joblib
+import sqlite3
+import os
+import logging
+from datetime import datetime, timedelta
 from pathlib import Path
-import numpy as np
+from collections import defaultdict
 
-# Lazy imports for ML libraries (only load when needed)
-def _get_sklearn():
-    try:
-        import sklearn
-        from sklearn.ensemble import RandomForestClassifier
-        from sklearn.linear_model import LogisticRegression
-        from sklearn.cluster import KMeans
-        return sklearn, RandomForestClassifier, LogisticRegression, KMeans
-    except ImportError:
-        return None, None, None, None
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def _get_pandas():
-    try:
-        import pandas as pd
-        return pd
-    except ImportError:
-        return None
+app = FastAPI(title="Kilo ML Engine")
 
-# Models directory
-MODELS_DIR = Path("/data/ml_models")
+# Use shared PVC so models survive pod restarts
+MODELS_DIR = Path("/app/kilo_data/ml_models")
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-app = FastAPI(title="ML Engine Service")
+DB_PATH = "/app/kilo_data/kilo_guardian.db"
+AI_BRAIN_URL = os.environ.get("AI_BRAIN_URL", "http://kilo-ai-brain:9004")
+HABITS_URL = os.environ.get("HABITS_URL", "http://kilo-habits:9000")
+MEDS_URL = os.environ.get("MEDS_URL", "http://kilo-meds:9000")
+FINANCIAL_URL = os.environ.get("FINANCIAL_URL", "http://kilo-financial:9005")
 
-# Health check
-@app.get("/status")
-@app.get("/health")
-def status():
-    return {"status": "ok", "models_dir": str(MODELS_DIR)}
+# In-memory pattern cache (refreshed on /learn)
+pattern_cache: Dict = {}
+last_trained: Optional[str] = None
 
-# --- Models ---
 
-class HabitPredictionRequest(BaseModel):
-    habit_id: int
-    habit_name: str
-    current_streak: int = 0
-    completions_this_week: int = 0
-    target_count: int = 1
-    frequency: str = "daily"
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-class HabitPredictionResponse(BaseModel):
-    habit_id: int
-    completion_probability: float
-    confidence: str  # "high", "medium", "low"
-    recommendation: str
-    should_send_reminder: bool
 
-class ReminderTimingRequest(BaseModel):
-    habit_id: Optional[int] = None
-    habit_name: str
-
-class ReminderTimingResponse(BaseModel):
-    habit_id: Optional[int] = None
-    optimal_times: List[str]  # List of time strings like "08:15", "14:30"
-    reasoning: str
-
-class PatternInsight(BaseModel):
-    pattern_type: str  # "correlation", "sequence", "anomaly"
-    description: str
-    confidence: float
-    actionable: bool
-    suggestion: Optional[str] = None
-
-# --- Helper Functions ---
-
-def _extract_habit_features(req: HabitPredictionRequest, current_time: datetime.datetime) -> Dict[str, Any]:
-    """
-    Extract features from habit data for ML model.
-
-    Features:
-    - day_of_week (0-6, Monday=0)
-    - hour_of_day (0-23)
-    - current_streak
-    - completions_this_week
-    - is_weekend (0 or 1)
-    - week_completion_rate (0.0-1.0)
-    """
-    day_of_week = current_time.weekday()
-    hour_of_day = current_time.hour
-    is_weekend = 1 if day_of_week >= 5 else 0
-
-    # Calculate week completion rate
-    if req.frequency == "daily":
-        expected_this_week = 7
-    elif req.frequency == "weekly":
-        expected_this_week = 1
-    else:
-        expected_this_week = 1  # monthly or other
-
-    week_completion_rate = min(req.completions_this_week / expected_this_week, 1.0) if expected_this_week > 0 else 0.0
-
-    return {
-        "day_of_week": day_of_week,
-        "hour_of_day": hour_of_day,
-        "current_streak": req.current_streak,
-        "completions_this_week": req.completions_this_week,
-        "is_weekend": is_weekend,
-        "week_completion_rate": week_completion_rate
-    }
-
-def _rule_based_prediction(features: Dict[str, Any]) -> float:
-    """
-    Simple rule-based prediction when no ML model is trained yet.
-    Returns probability between 0.0 and 1.0.
-    """
-    base_prob = 0.5
-
-    # Strong streak? High probability
-    if features["current_streak"] >= 7:
-        base_prob += 0.3
-    elif features["current_streak"] >= 3:
-        base_prob += 0.15
-
-    # Good week completion rate? Higher probability
-    base_prob += features["week_completion_rate"] * 0.2
-
-    # Weekend penalty (many people skip habits on weekends)
-    if features["is_weekend"]:
-        base_prob -= 0.1
-
-    # Late night penalty (less likely to complete habits late)
-    if features["hour_of_day"] >= 22:
-        base_prob -= 0.15
-
-    return max(0.0, min(1.0, base_prob))
-
-# --- Prediction Endpoints ---
-
-@app.post("/predict/habit_completion", response_model=HabitPredictionResponse)
-def predict_habit_completion(req: HabitPredictionRequest):
-    """
-    Predict the probability that Kyle will complete this habit today.
-
-    Uses ML model if trained, otherwise falls back to rule-based heuristics.
-    """
-    current_time = datetime.datetime.now()
-
-    # Extract features
-    features = _extract_habit_features(req, current_time)
-
-    # Try to load trained model
-    model_path = MODELS_DIR / f"habit_completion_{req.habit_id}.pkl"
-
-    if model_path.exists():
-        try:
-            model = joblib.load(model_path)
-            # Convert features to numpy array in correct order
-            feature_vector = np.array([[
-                features["day_of_week"],
-                features["hour_of_day"],
-                features["current_streak"],
-                features["completions_this_week"],
-                features["is_weekend"],
-                features["week_completion_rate"]
-            ]])
-            probability = model.predict_proba(feature_vector)[0][1]  # Probability of class 1 (completion)
-            confidence = "high"
-        except Exception as e:
-            print(f"Model loading failed: {e}, falling back to rules")
-            probability = _rule_based_prediction(features)
-            confidence = "medium"
-    else:
-        # No trained model yet, use rules
-        probability = _rule_based_prediction(features)
-        confidence = "low"
-
-    # Generate recommendation
-    should_remind = probability < 0.6
-
-    if probability >= 0.8:
-        recommendation = f"You're very likely to complete {req.habit_name} today. Keep up the streak!"
-    elif probability >= 0.6:
-        recommendation = f"Good chance you'll complete {req.habit_name} today. Stay focused!"
-    elif probability >= 0.4:
-        recommendation = f"You might need a reminder for {req.habit_name}. I'll check in with you."
-    else:
-        recommendation = f"Low completion probability for {req.habit_name}. Let me send you a proactive reminder!"
-
-    return HabitPredictionResponse(
-        habit_id=req.habit_id,
-        completion_probability=probability,
-        confidence=confidence,
-        recommendation=recommendation,
-        should_send_reminder=should_remind
-    )
-
-@app.post("/predict/reminder_timing", response_model=ReminderTimingResponse)
-def predict_optimal_reminder_timing(req: ReminderTimingRequest):
-    """
-    Predict the best times to send reminders for this habit.
-
-    Analyzes historical completion patterns to find when Kyle is most responsive.
-    """
-    # For now, use smart defaults based on habit name patterns
-    # In future, this will analyze actual completion time history
-
-    habit_lower = req.habit_name.lower()
-
-    if any(word in habit_lower for word in ["morning", "breakfast", "coffee", "wake"]):
-        optimal_times = ["07:30", "08:00", "08:30"]
-        reasoning = f"Based on typical morning routines, these times work well for '{req.habit_name}'"
-
-    elif any(word in habit_lower for word in ["lunch", "afternoon", "midday"]):
-        optimal_times = ["12:00", "12:30", "13:00"]
-        reasoning = f"Midday reminders are effective for '{req.habit_name}'"
-
-    elif any(word in habit_lower for word in ["evening", "dinner", "night", "bed"]):
-        optimal_times = ["18:00", "19:00", "20:00"]
-        reasoning = f"Evening times are optimal for '{req.habit_name}'"
-
-    elif any(word in habit_lower for word in ["exercise", "workout", "gym", "run"]):
-        optimal_times = ["17:00", "17:30", "18:00"]
-        reasoning = f"After-work times are common for '{req.habit_name}'"
-
-    else:
-        # Generic defaults
-        optimal_times = ["09:00", "14:00", "19:00"]
-        reasoning = f"General reminder times for '{req.habit_name}'. Will personalize as I learn your patterns."
-
-    return ReminderTimingResponse(
-        habit_id=req.habit_id,
-        optimal_times=optimal_times,
-        reasoning=reasoning
-    )
-
-@app.get("/insights/patterns", response_model=List[PatternInsight])
-def get_pattern_insights():
-    """
-    Return discovered patterns and insights about Kyle's behavior.
-
-    Examples:
-    - "Kyle exercises more on Mon/Wed/Fri"
-    - "Medication adherence drops on weekends"
-    - "Water intake correlates with exercise"
-    """
-    # Run pattern detection analysis
-    insights = _detect_patterns()
-
-    # Save insights for caching
-    insights_path = MODELS_DIR / "insights.json"
+async def notify_kilo(content: str):
     try:
-        with open(insights_path, 'w') as f:
-            json.dump([insight.dict() for insight in insights], f, indent=2)
-    except Exception:
-        pass
-
-    return insights
-
-def _detect_patterns() -> List[PatternInsight]:
-    """
-    Analyze habit data to detect patterns, correlations, and anomalies.
-    """
-    insights = []
-
-    try:
-        import httpx
-        from collections import defaultdict
-        from datetime import datetime, timedelta
-
-        # Fetch habit data
-        habits_url = os.getenv("HABITS_URL", "http://habits:9003")
-        response = httpx.get(f"{habits_url}/habits", timeout=10)
-
-        if response.status_code != 200:
-            return [_default_insight()]
-
-        habits = response.json()
-
-        if not habits or len(habits) == 0:
-            return [_default_insight()]
-
-        # Pattern 1: Weekly completion patterns
-        weekly_patterns = _analyze_weekly_patterns(habits)
-        insights.extend(weekly_patterns)
-
-        # Pattern 2: Streak analysis
-        streak_insights = _analyze_streaks(habits)
-        insights.extend(streak_insights)
-
-        # Pattern 3: Completion time patterns
-        time_insights = _analyze_completion_times(habits)
-        insights.extend(time_insights)
-
-        # If no patterns found, return default
-        if not insights:
-            insights = [_default_insight()]
-
-        return insights[:5]  # Return top 5 insights
-
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f"{AI_BRAIN_URL}/observations", json={
+                "source": "ml_engine",
+                "type": "pattern_insight",
+                "content": content,
+                "priority": "normal",
+                "metadata": {"auto": True}
+            })
     except Exception as e:
-        print(f"Error detecting patterns: {e}")
-        return [_default_insight()]
+        logger.error(f"notify_kilo failed: {e}")
 
-def _default_insight() -> PatternInsight:
-    """Return default insight when no data available."""
-    return PatternInsight(
-        pattern_type="info",
-        description="Keep tracking your habits! I'll start finding patterns after you have a week of data.",
-        confidence=1.0,
-        actionable=False
-    )
 
-def _analyze_weekly_patterns(habits: list) -> List[PatternInsight]:
-    """Detect day-of-week patterns in habit completions."""
+# -- PATTERN ANALYSIS ────────────────────────────────────────────────────────
+
+def analyze_habit_patterns(habits: list) -> list:
+    """Find day-of-week patterns, streaks, and drop-offs from real completion data."""
     insights = []
-    from collections import defaultdict
-    from datetime import datetime
+    today = datetime.now().date()
 
     for habit in habits:
+        name = habit.get("name", "unknown")
         completions = habit.get("completions", [])
-        if len(completions) < 7:
+        if not completions:
             continue
 
-        # Count completions by day of week
+        # Parse completion dates
+        done_dates = set()
         day_counts = defaultdict(int)
-        for completion in completions:
-            date_str = completion.get("completion_date")
-            if date_str:
+        for c in completions:
+            ds = c.get("completion_date") or c.get("date") or c.get("completed_at", "")
+            if ds:
                 try:
-                    date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
-                    day_name = date.strftime("%A")
-                    if completion.get("count", 0) > 0:
-                        day_counts[day_name] += 1
-                except:
+                    d = datetime.fromisoformat(ds[:10]).date()
+                    if c.get("count", c.get("completed", 1)) > 0:
+                        done_dates.add(d)
+                        day_counts[d.strftime("%A")] += 1
+                except Exception:
                     pass
 
-        if not day_counts:
+        if not done_dates:
             continue
 
-        # Find best and worst days
-        sorted_days = sorted(day_counts.items(), key=lambda x: x[1], reverse=True)
-        if len(sorted_days) >= 2:
-            best_day = sorted_days[0][0]
-            worst_day = sorted_days[-1][0]
-
-            if sorted_days[0][1] > sorted_days[-1][1] * 1.5:  # At least 50% difference
-                insights.append(PatternInsight(
-                    pattern_type="sequence",
-                    description=f"You complete '{habit.get('name')}' most often on {best_day}s",
-                    confidence=0.75,
-                    actionable=True,
-                    suggestion=f"Consider scheduling '{habit.get('name')}' on {best_day}s for best results"
-                ))
-
-    return insights
-
-def _analyze_streaks(habits: list) -> List[PatternInsight]:
-    """Analyze streaks and provide encouragement or alerts."""
-    insights = []
-
-    for habit in habits:
-        completions = habit.get("completions", [])
-        if len(completions) < 3:
-            continue
-
-        # Calculate current streak
+        # Current streak
         streak = 0
-        from datetime import datetime, timedelta
-        today = datetime.now().date()
-
-        for i in range(30):  # Check last 30 days
-            check_date = today - timedelta(days=i)
-            date_str = check_date.isoformat()
-
-            found = False
-            for completion in completions:
-                comp_date = completion.get("completion_date", "")
-                if comp_date.startswith(date_str):
-                    if completion.get("count", 0) > 0:
-                        found = True
-                        break
-
-            if found:
+        for i in range(60):
+            check = today - timedelta(days=i)
+            if check in done_dates:
                 streak += 1
-            else:
+            elif i > 0:
                 break
 
-        # Insights based on streak
-        if streak >= 7:
-            insights.append(PatternInsight(
-                pattern_type="correlation",
-                description=f"Amazing! You've maintained '{habit.get('name')}' for {streak} days straight! 🔥",
-                confidence=1.0,
-                actionable=True,
-                suggestion="Keep up the great work! You're building a strong habit."
-            ))
-        elif streak >= 3:
-            insights.append(PatternInsight(
-                pattern_type="info",
-                description=f"Good progress on '{habit.get('name')}' - {streak} day streak",
-                confidence=1.0,
-                actionable=True,
-                suggestion="You're on your way! Try to reach a 7-day streak."
-            ))
+        # Recent drop-off (no completions in 3 days but had them before)
+        recent = any((today - timedelta(days=i)) in done_dates for i in range(3))
+        older = any((today - timedelta(days=i)) in done_dates for i in range(4, 14))
+
+        if not recent and older:
+            insights.append({
+                "type": "dropoff",
+                "habit": name,
+                "message": f"'{name}' hasn't been completed in 3+ days but was active before."
+            })
+        elif streak >= 7:
+            insights.append({
+                "type": "streak",
+                "habit": name,
+                "streak": streak,
+                "message": f"'{name}' is on a {streak}-day streak!"
+            })
+
+        # Best day of week
+        if day_counts:
+            best_day = max(day_counts, key=day_counts.get)
+            insights.append({
+                "type": "best_day",
+                "habit": name,
+                "day": best_day,
+                "message": f"Kyle completes '{name}' most often on {best_day}s ({day_counts[best_day]} times)."
+            })
 
     return insights
 
-def _analyze_completion_times(habits: list) -> List[PatternInsight]:
-    """Detect anomalies in completion patterns."""
-    insights = []
-    from datetime import datetime, timedelta
 
-    for habit in habits:
-        completions = habit.get("completions", [])
-        if len(completions) < 7:
+def analyze_med_patterns(meds: list) -> list:
+    """Detect medication adherence patterns."""
+    insights = []
+    today = datetime.now().date()
+
+    for med in meds:
+        name = med.get("name", "unknown")
+        logs = med.get("logs", med.get("history", []))
+        if not logs:
             continue
 
-        # Check for recent drop in completions
-        recent_count = 0
-        older_count = 0
-        today = datetime.now().date()
+        taken_dates = set()
+        for log in logs:
+            ds = log.get("taken_at") or log.get("date") or log.get("timestamp", "")
+            if ds:
+                try:
+                    taken_dates.add(datetime.fromisoformat(ds[:10]).date())
+                except Exception:
+                    pass
 
-        for completion in completions:
-            date_str = completion.get("completion_date", "")
-            try:
-                comp_date = datetime.fromisoformat(date_str.replace('Z', '+00:00')).date()
-                days_ago = (today - comp_date).days
+        # Check last 7 days adherence
+        last_7 = sum(1 for i in range(7) if (today - timedelta(days=i)) in taken_dates)
+        rate = last_7 / 7.0
 
-                if days_ago <= 3:
-                    recent_count += completion.get("count", 0)
-                elif days_ago <= 10:
-                    older_count += completion.get("count", 0)
-            except:
-                pass
-
-        # Detect drop in activity
-        if older_count >= 5 and recent_count == 0:
-            insights.append(PatternInsight(
-                pattern_type="anomaly",
-                description=f"You haven't completed '{habit.get('name')}' in the last 3 days",
-                confidence=0.85,
-                actionable=True,
-                suggestion="Get back on track! Even a small step counts."
-            ))
+        if rate < 0.5:
+            insights.append({
+                "type": "med_adherence",
+                "med": name,
+                "rate": rate,
+                "message": f"Medication adherence for '{name}' is {int(rate*100)}% over the last week."
+            })
 
     return insights
 
-# --- Training Endpoints ---
 
-@app.post("/train/habits")
-def train_habit_models(background_tasks: BackgroundTasks):
-    """
-    Train/retrain habit completion prediction models.
+def analyze_spending_patterns(transactions: list) -> list:
+    """Find spending patterns and anomalies."""
+    insights = []
+    if not transactions:
+        return insights
 
-    This endpoint is called nightly to update models with new data.
-    Runs in background to avoid blocking.
-    """
-    background_tasks.add_task(_train_habit_models_background)
-    return {"status": "training_started", "message": "Habit models are being trained in the background"}
+    today = datetime.now().date()
+    this_month = defaultdict(float)
+    last_month = defaultdict(float)
 
-@app.post("/train/habit_completion")
-def train_single_habit_model(req: dict, background_tasks: BackgroundTasks):
-    """
-    Train/retrain a single habit completion model.
+    for tx in transactions:
+        ds = tx.get("date") or tx.get("transaction_date", "")
+        amount = abs(float(tx.get("amount", 0)))
+        category = tx.get("category") or tx.get("merchant_category", "Other")
+        if not ds:
+            continue
+        try:
+            d = datetime.fromisoformat(ds[:10]).date()
+            months_ago = (today.year - d.year) * 12 + (today.month - d.month)
+            if months_ago == 0:
+                this_month[category] += amount
+            elif months_ago == 1:
+                last_month[category] += amount
+        except Exception:
+            pass
 
-    Request body: {"habit_id": 1}
-    """
-    habit_id = req.get("habit_id")
-    if habit_id is None:
-        return {"status": "error", "message": "habit_id is required"}
+    # Find categories that spiked >30%
+    for cat, amt in this_month.items():
+        prev = last_month.get(cat, 0)
+        if prev > 0 and amt > prev * 1.3:
+            insights.append({
+                "type": "spending_spike",
+                "category": cat,
+                "this_month": round(amt, 2),
+                "last_month": round(prev, 2),
+                "message": f"{cat} spending is up {int((amt/prev-1)*100)}% vs last month (${amt:.0f} vs ${prev:.0f})."
+            })
 
-    background_tasks.add_task(_train_single_habit_background, habit_id)
-    return {"status": "training_started", "message": f"Training model for habit {habit_id}"}
+    return insights
 
-def _train_single_habit_background(habit_id: int):
-    """Train a model for a specific habit."""
-    import httpx
 
-    sklearn_tuple = _get_sklearn()
-    if sklearn_tuple[0] is None:
-        print("scikit-learn not available, skipping training")
-        return
+async def run_learning() -> Dict:
+    """Fetch all data and build pattern cache."""
+    global pattern_cache, last_trained
 
-    sklearn, RandomForestClassifier, LogisticRegression, KMeans = sklearn_tuple
+    all_insights = []
 
-    try:
-        # Fetch habit data
-        habits_url = os.getenv("HABITS_URL", "http://habits:9003")
-        response = httpx.get(f"{habits_url}/habits/{habit_id}", timeout=10)
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        # Habits
+        try:
+            r = await client.get(f"{HABITS_URL}/")
+            habits = r.json().get("habits", r.json()) if r.status_code == 200 else []
+            if isinstance(habits, list):
+                all_insights.extend(analyze_habit_patterns(habits))
+        except Exception as e:
+            logger.warning(f"Habits fetch failed: {e}")
 
-        if response.status_code != 200:
-            print(f"Failed to fetch habit {habit_id}: {response.status_code}")
-            return
+        # Meds
+        try:
+            r = await client.get(f"{MEDS_URL}/")
+            meds = r.json().get("meds", r.json()) if r.status_code == 200 else []
+            if isinstance(meds, list):
+                all_insights.extend(analyze_med_patterns(meds))
+        except Exception as e:
+            logger.warning(f"Meds fetch failed: {e}")
 
-        habit = response.json()
+        # Financial
+        try:
+            r = await client.get(f"{FINANCIAL_URL}/transactions?limit=500")
+            if r.status_code == 200:
+                raw = r.json()
+                txns = raw if isinstance(raw, list) else raw.get("transactions", [])
+            else:
+                txns = []
+            if isinstance(txns, list):
+                all_insights.extend(analyze_spending_patterns(txns))
+        except Exception as e:
+            logger.warning(f"Financial fetch failed: {e}")
 
-        # Check if habit has sufficient completion data
-        completions = habit.get("completions", [])
-        if len(completions) < 7:  # Need at least a week of data
-            print(f"Habit {habit_id} has insufficient data ({len(completions)} completions), skipping")
-            return
+    pattern_cache = {
+        "insights": all_insights,
+        "generated_at": datetime.now().isoformat(),
+        "counts": {
+            "habit_insights": sum(1 for i in all_insights if i["type"] in ("streak", "dropoff", "best_day")),
+            "med_insights": sum(1 for i in all_insights if i["type"] == "med_adherence"),
+            "spending_insights": sum(1 for i in all_insights if i["type"] == "spending_spike"),
+        }
+    }
 
-        print(f"Training model for habit {habit_id} with {len(completions)} completions...")
+    # Save to disk so it survives restarts
+    cache_path = MODELS_DIR / "pattern_cache.json"
+    cache_path.write_text(json.dumps(pattern_cache, indent=2))
 
-        # Prepare training data (simplified - in production, extract more features)
-        X = []
-        y = []
+    last_trained = datetime.now().isoformat()
+    logger.info(f"Learning complete: {len(all_insights)} patterns found")
 
-        for completion in completions:
-            # Features: day_of_week, hour_of_day (if available)
-            # For now, simple binary: did they complete it?
-            # This is a placeholder - real implementation would extract temporal features
-            X.append([0, 0, 0, 0, 0, 0])  # Placeholder features
-            y.append(1 if completion.get("count", 0) > 0 else 0)
+    # Send notable insights to Kilo as observations
+    notable = [i for i in all_insights if i["type"] in ("dropoff", "spending_spike", "med_adherence")]
+    for insight in notable[:3]:
+        await notify_kilo(f"Pattern detected: {insight['message']}")
 
-        if len(X) < 7:
-            print(f"Not enough feature data for habit {habit_id}")
-            return
+    return pattern_cache
 
-        # Train model
-        import numpy as np
-        model = RandomForestClassifier(n_estimators=100, random_state=42)
-        model.fit(np.array(X), np.array(y))
 
-        # Save model
-        import joblib
-        model_path = MODELS_DIR / f"habit_completion_{habit_id}.pkl"
-        joblib.dump(model, model_path)
+def load_cache():
+    """Load cached patterns from disk on startup."""
+    global pattern_cache
+    cache_path = MODELS_DIR / "pattern_cache.json"
+    if cache_path.exists():
+        try:
+            pattern_cache = json.loads(cache_path.read_text())
+            logger.info(f"Loaded {len(pattern_cache.get('insights', []))} cached patterns")
+        except Exception as e:
+            logger.warning(f"Cache load failed: {e}")
 
-        print(f"✅ Model saved for habit {habit_id} at {model_path}")
 
-    except Exception as e:
-        print(f"Error training habit {habit_id}: {e}")
-        import traceback
-        traceback.print_exc()
+async def nightly_loop():
+    """Retrain every night at 2am."""
+    await asyncio.sleep(10)  # Initial run shortly after startup
+    await run_learning()
+    while True:
+        now = datetime.now()
+        next_run = now.replace(hour=2, minute=0, second=0, microsecond=0)
+        if now >= next_run:
+            next_run += timedelta(days=1)
+        wait = (next_run - now).total_seconds()
+        logger.info(f"Next learning run in {wait/3600:.1f} hours")
+        await asyncio.sleep(wait)
+        await run_learning()
 
-def _train_habit_models_background():
-    """
-    Background task to train habit completion models.
 
-    Fetches data from habits microservice and trains scikit-learn models.
-    """
-    import httpx
+# -- ENDPOINTS ───────────────────────────────────────────────────────────────
 
-    sklearn_tuple = _get_sklearn()
-    if sklearn_tuple[0] is None:
-        print("scikit-learn not available, skipping training")
-        return
+@app.get("/health")
+@app.get("/status")
+def health():
+    return {"status": "ok", "last_trained": last_trained, "patterns": len(pattern_cache.get("insights", []))}
 
-    sklearn, RandomForestClassifier, LogisticRegression, KMeans = sklearn_tuple
 
-    try:
-        # Fetch habit completion data from habits microservice
-        habits_url = os.getenv("HABITS_URL", "http://habits:9003")
-        response = httpx.get(f"{habits_url}/", timeout=10)
+@app.get("/insights")
+def get_insights():
+    """Return all current pattern insights. Kilo reads this via tool call."""
+    if not pattern_cache:
+        return {"insights": [], "message": "No patterns yet — learning runs at startup and nightly at 2am."}
+    return pattern_cache
 
-        if response.status_code != 200:
-            print(f"Failed to fetch habits: {response.status_code}")
-            return
 
-        habits = response.json()
+@app.post("/learn")
+async def trigger_learning(background_tasks: BackgroundTasks):
+    """Trigger immediate retraining. Kilo can call this from chat."""
+    background_tasks.add_task(run_learning)
+    return {"status": "learning_started", "message": "Analyzing your patterns now. Check /insights in ~10 seconds."}
 
-        # Train a model for each habit with sufficient data
-        for habit in habits:
-            habit_id = habit["id"]
-            completions = habit.get("completions", [])
 
-            if len(completions) < 7:
-                print(f"Habit {habit_id} has insufficient data ({len(completions)} completions), skipping")
-                continue
+@app.get("/predict/habit/{habit_id}")
+async def predict_habit(habit_id: int):
+    """Should Kilo remind about this habit right now?"""
+    now = datetime.now()
+    day_of_week = now.strftime("%A")
+    hour = now.hour
 
-            # Prepare training data
-            # For now, create synthetic training data based on completions
-            # In production, this would analyze actual completion patterns
+    # Look up this habit's best_day pattern from cache
+    insights = pattern_cache.get("insights", [])
+    best_day = None
+    for i in insights:
+        if i.get("type") == "best_day" and i.get("habit_id") == habit_id:
+            best_day = i.get("day")
+            break
 
-            # Create simple model for demonstration
-            model = LogisticRegression()
-
-            # Placeholder: Train with dummy data
-            # TODO: Extract real features from completion history
-            X_train = np.random.rand(len(completions), 6)
-            y_train = np.array([1] * len(completions))  # All completions in history were successful
-
-            model.fit(X_train, y_train)
-
-            # Save model
-            model_path = MODELS_DIR / f"habit_completion_{habit_id}.pkl"
-            joblib.dump(model, model_path)
-            print(f"✅ Trained model for habit {habit_id}: {habit['name']}")
-
-        print(f"✅ Training complete. Trained models for {len(habits)} habits.")
-
-    except Exception as e:
-        print(f"❌ Training failed: {e}")
-
-# --- Stats Endpoint ---
-
-@app.get("/stats")
-def get_ml_stats():
-    """
-    Get statistics about the ML Engine's models and predictions.
-    """
-    model_files = list(MODELS_DIR.glob("*.pkl"))
+    # Simple heuristic: remind if it's morning/evening and not on best day
+    should_remind = hour in range(8, 10) or hour in range(18, 21)
+    if best_day and day_of_week == best_day:
+        should_remind = False  # Will likely do it anyway
 
     return {
-        "models_trained": len(model_files),
-        "models_dir": str(MODELS_DIR),
-        "model_files": [f.name for f in model_files],
-        "last_training": "Never" if len(model_files) == 0 else "Check model file timestamps"
+        "habit_id": habit_id,
+        "should_remind": should_remind,
+        "day_of_week": day_of_week,
+        "best_day": best_day,
+        "reasoning": f"It is {day_of_week} at {now.strftime('%H:%M')}. Best day is {best_day or 'unknown'}."
     }
+
+
+@app.on_event("startup")
+async def startup():
+    load_cache()
+    asyncio.create_task(nightly_loop())
+    logger.info("ML Engine started — initial learning will run in 10s")
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=9008)
+    uvicorn.run(app, host="0.0.0.0", port=9009)
