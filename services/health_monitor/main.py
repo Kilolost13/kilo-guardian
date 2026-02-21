@@ -77,7 +77,7 @@ async def notify_kilo(content: str, priority: str = 'high'):
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.post(
                 f'{AI_BRAIN_URL}/observations',
-                json={'source': 'health_monitor', 'content': content,
+                json={'source': 'health_monitor', 'type': 'system_alert', 'content': content,
                       'priority': priority, 'metadata': {'auto': True}}
             )
     except Exception as e:
