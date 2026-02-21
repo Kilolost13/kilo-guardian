@@ -214,20 +214,22 @@ async def status():
     return {"status": "ok"}
 
 SERVICE_URLS = {
-    "meds": os.getenv("MEDS_URL", "http://docker_meds_1:9001"),
-    "reminder": os.getenv("REMINDER_URL", "http://docker_reminder_1:9002"),
-    "reminders": os.getenv("REMINDER_URL", "http://docker_reminder_1:9002"),  # Alias for plural
-    "habits": os.getenv("HABITS_URL", "http://docker_habits_1:9003"),
-    "ai_brain": os.getenv("AI_BRAIN_URL", "http://docker_ai_brain_1:9004"),
-    "financial": os.getenv("FINANCIAL_URL", "http://docker_financial_1:9005"),
-    "library_of_truth": os.getenv("LIBRARY_OF_TRUTH_URL", "http://docker_library_of_truth_1:9006"),
-    "cam": os.getenv("CAM_URL", "http://docker_cam_1:9007"),
-    "ml": os.getenv("ML_ENGINE_URL", "http://docker_ml_engine_1:9008"),
-    "voice": os.getenv("VOICE_URL", "http://docker_voice_1:9009"),
-    "usb": os.getenv("USB_TRANSFER_URL", "http://docker_usb_transfer_1:8006"),
+    "meds": os.getenv("MEDS_URL", "http://kilo-meds:9000"),
+    "reminder": os.getenv("REMINDER_URL", "http://kilo-reminder:9002"),
+    "reminders": os.getenv("REMINDER_URL", "http://kilo-reminder:9002"),
+    "habits": os.getenv("HABITS_URL", "http://kilo-habits:9000"),
+    "ai_brain": os.getenv("AI_BRAIN_URL", "http://kilo-ai-brain:9004"),
+    "financial": os.getenv("FINANCIAL_URL", "http://kilo-financial:9005"),
+    "library_of_truth": os.getenv("LIBRARY_OF_TRUTH_URL", "http://kilo-library:9006"),
+    "cam": os.getenv("CAM_URL", "http://kilo-cam:9007"),
+    "ml": os.getenv("ML_ENGINE_URL", "http://kilo-ml-engine:9009"),
+    "voice": os.getenv("VOICE_URL", "http://kilo-voice:9008"),
+    "usb": os.getenv("USB_TRANSFER_URL", "http://kilo-usb-transfer:9010"),
     "security_monitor": os.getenv("SECURITY_MONITOR_URL", "http://security-monitor:8001"),
     "drone_control": os.getenv("DRONE_CONTROL_URL", "http://drone-control:8002"),
     "briefing": os.getenv("BRIEFING_URL", "http://briefing:8003"),
+    "chat": os.getenv("AI_BRAIN_URL", "http://kilo-ai-brain:9004"),
+    "library": os.getenv("LIBRARY_OF_TRUTH_URL", "http://kilo-library:9006"),
 }
 
 @app.get("/health")
@@ -618,6 +620,184 @@ if socketio:
         await sio.emit('pong', {'timestamp': time.time()}, room=sid)
 
 
+    # Socket.IO emit endpoint for broadcasting events
+    @app.post("/emit")
+    async def emit_event(payload: dict):
+        """Broadcast Socket.IO event to all connected clients"""
+        if not socketio:
+            return {"status": "error", "message": "Socket.IO not available"}
+        
+        event = payload.get("event", "message")
+        data = payload.get("data", {})
+        
+        await sio.emit(event, data)
+        logger.info(f"Broadcasted Socket.IO event: {event}")
+        
+        return {"status": "ok", "message": "Event broadcast"}
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Kubernetes Management Endpoints
+# ═══════════════════════════════════════════════════════════════════════════
+import subprocess
+import json
+
+@app.get("/k8s/pods")
+async def get_pods():
+    """Get all pods in kilo-guardian namespace"""
+    try:
+        result = subprocess.run(
+            ['kubectl', 'get', 'pods', '-n', 'kilo-guardian', '-o', 'json'],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return []
+        
+        data = json.loads(result.stdout)
+        pods = []
+        for item in data.get('items', []):
+            status = item['status'].get('phase', 'Unknown')
+            if item['status'].get('containerStatuses'):
+                for cs in item['status']['containerStatuses']:
+                    if cs.get('state', {}).get('waiting', {}).get('reason') == 'CrashLoopBackOff':
+                        status = 'CrashLoopBackOff'
+            
+            pods.append({
+                'name': item['metadata']['name'],
+                'status': status,
+                'restarts': sum(cs.get('restartCount', 0) for cs in item['status'].get('containerStatuses', [])),
+                'age': item['metadata'].get('creationTimestamp', ''),
+                'node': item['spec'].get('nodeName', ''),
+                'ready': f"{sum(1 for cs in item['status'].get('containerStatuses', []) if cs.get('ready', False))}/{len(item['status'].get('containerStatuses', []))}"
+            })
+        return pods
+    except Exception as e:
+        logger.error(f"Error getting pods: {e}")
+        return []
+
+@app.get("/k8s/nodes")
+async def get_nodes():
+    """Get all cluster nodes"""
+    try:
+        result = subprocess.run(
+            ['kubectl', 'get', 'nodes', '-o', 'json'],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return []
+        
+        data = json.loads(result.stdout)
+        nodes = []
+        for item in data.get('items', []):
+            status = 'NotReady'
+            for cond in item['status'].get('conditions', []):
+                if cond['type'] == 'Ready' and cond['status'] == 'True':
+                    status = 'Ready'
+                    break
+            
+            nodes.append({
+                'name': item['metadata']['name'],
+                'status': status,
+                'roles': ','.join([k.split('/')[-1] for k in item['metadata'].get('labels', {}).keys() if 'node-role' in k]),
+                'age': item['metadata'].get('creationTimestamp', ''),
+                'version': item['status'].get('nodeInfo', {}).get('kubeletVersion', ''),
+                'cpu': '0%',
+                'memory': '0%'
+            })
+        return nodes
+    except Exception as e:
+        logger.error(f"Error getting nodes: {e}")
+        return []
+
+@app.get("/k8s/cronjobs")
+async def get_cronjobs():
+    """Get all cronjobs in kilo-guardian namespace"""
+    try:
+        result = subprocess.run(
+            ['kubectl', 'get', 'cronjobs', '-n', 'kilo-guardian', '-o', 'json'],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            return []
+        
+        data = json.loads(result.stdout)
+        cronjobs = []
+        for item in data.get('items', []):
+            cronjobs.append({
+                'name': item['metadata']['name'],
+                'schedule': item['spec'].get('schedule', ''),
+                'last_schedule': item['status'].get('lastScheduleTime', ''),
+                'active': len(item['status'].get('active', [])),
+                'suspended': item['spec'].get('suspend', False)
+            })
+        return cronjobs
+    except Exception as e:
+        logger.error(f"Error getting cronjobs: {e}")
+        return []
+
+@app.post("/k8s/pods/{pod_name}/restart")
+async def restart_pod(pod_name: str):
+    """Restart a pod by deleting it (k8s will recreate it)"""
+    try:
+        result = subprocess.run(
+            ['kubectl', 'delete', 'pod', pod_name, '-n', 'kilo-guardian'],
+            capture_output=True, text=True, timeout=30
+        )
+        return {"success": result.returncode == 0, "message": result.stdout or result.stderr}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+@app.delete("/k8s/pods/{pod_name}")
+async def delete_pod(pod_name: str):
+    """Delete a pod"""
+    try:
+        result = subprocess.run(
+            ['kubectl', 'delete', 'pod', pod_name, '-n', 'kilo-guardian', '--force', '--grace-period=0'],
+            capture_output=True, text=True, timeout=30
+        )
+        return {"success": result.returncode == 0, "message": result.stdout or result.stderr}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+
+@app.get("/observations")
+async def get_observations(limit: int = 20):
+    """Proxy GET /observations to kilo-ai-brain"""
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(f"http://kilo-ai-brain:9004/observations", params={"limit": limit})
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/observations")
+async def post_observation(request: Request):
+    """Proxy POST /observations to kilo-ai-brain"""
+    try:
+        body = await request.body()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "http://kilo-ai-brain:9004/observations",
+                content=body,
+                headers={"Content-Type": "application/json"}
+            )
+            return resp.json()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+# Dedicated /chat routes that forward to ai_brain preserving the full path
+@app.api_route("/chat/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy_chat(request: Request, path: str):
+    return await _proxy(request, "ai_brain", f"chat/{path}")
+
+@app.api_route("/api/chat/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
+async def proxy_api_chat(request: Request, path: str):
+    return await _proxy(request, "ai_brain", f"chat/{path}")
+
 @app.api_route("/api/{service}/{path:path}", methods=["GET", "POST", "PUT", "DELETE"])
 async def proxy_all_api(request: Request, service: str, path: str):
     return await _proxy(request, service, path)
@@ -641,4 +821,5 @@ async def proxy_root(request: Request, service: str):
     if service == "socket.io":
         raise HTTPException(status_code=404, detail="Not found")
     return await _proxy(request, service, "")
+
 

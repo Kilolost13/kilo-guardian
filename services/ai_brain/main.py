@@ -2953,6 +2953,11 @@ class DesktopObservation(BaseModel):
 
 # In-memory storage for observations (latest 100)
 desktop_observations = []
+
+# Per-user conversation history for context across messages
+# Format: {user_id: [{role: user|model, text: ...}]}
+user_sessions: dict = {}
+MAX_SESSION_TURNS = 10  # Keep last 10 exchanges (20 messages)
 MAX_OBSERVATIONS = 100
 
 async def analyze_observation_with_llm(obs: DesktopObservation):
@@ -3812,7 +3817,23 @@ Respond naturally using your gremlin personality while being genuinely helpful."
         except Exception as e:
             logging.error(f"Failed to fetch observations: {e}")
 
-        full_prompt = f"{system_prompt}{context_info}{observation_context}\n\nKyle: {req.message}\n\nKilo:"
+        # Build conversation contents with session history
+        user_id = req.user or "kyle"
+        session_history = user_sessions.get(user_id, [])
+        system_context = system_prompt + context_info + observation_context
+
+        if session_history:
+            gemini_contents = []
+            first_turn = session_history[0]
+            gemini_contents.append({"role": "user", "parts": [{"text": system_context + "\n\nKyle: " + first_turn["text"]}]})
+            for turn in session_history[1:]:
+                gemini_contents.append({"role": turn["role"], "parts": [{"text": turn["text"]}]})
+            gemini_contents.append({"role": "user", "parts": [{"text": req.message}]})
+        else:
+            gemini_contents = [{"role": "user", "parts": [{"text": system_context + "\n\nKyle: " + req.message}]}]
+
+        # Fallback string for Ollama path
+        full_prompt = system_context + "\n\nKyle: " + req.message + "\n\nKilo:"
 
         # Detect if user needs research/advice
         research_triggers = [
@@ -3849,7 +3870,7 @@ Respond naturally using your gremlin personality while being genuinely helpful."
                 # Initial API call
                 response = client.models.generate_content(
                     model="gemini-2.0-flash",
-                    contents=full_prompt,
+                    contents=gemini_contents,
                     config=genai_client.types.GenerateContentConfig(
                         safety_settings=[
                             {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
@@ -3865,7 +3886,7 @@ Respond naturally using your gremlin personality while being genuinely helpful."
                 )
 
                 # Handle function calls (max 5 iterations to prevent loops)
-                conversation_history = [full_prompt]
+                conversation_history = list(gemini_contents)
                 max_iterations = 5
                 iteration = 0
 
@@ -3961,6 +3982,17 @@ Respond naturally using your gremlin personality while being genuinely helpful."
                 )
                 result = response.json()
                 response_text = result.get("response", "Something went sideways. Try again.")
+
+        # Save exchange to session history
+        user_id = req.user or "kyle"
+        if user_id not in user_sessions:
+            user_sessions[user_id] = []
+        user_sessions[user_id].append({"role": "user", "text": req.message})
+        user_sessions[user_id].append({"role": "model", "text": response_text.strip()})
+        # Cap history at MAX_SESSION_TURNS exchanges
+        max_msgs = MAX_SESSION_TURNS * 2
+        if len(user_sessions[user_id]) > max_msgs:
+            user_sessions[user_id] = user_sessions[user_id][-max_msgs:]
 
         return ChatResponse(response=response_text.strip(), context=req.context)
 
