@@ -705,6 +705,27 @@ async def get_nodes():
                 'cpu': '0%',
                 'memory': '0%'
             })
+
+        # Enrich with real CPU/memory from metrics API
+        try:
+            metrics_result = subprocess.run(
+                ['kubectl', 'top', 'nodes', '--no-headers'],
+                capture_output=True, text=True, timeout=10
+            )
+            if metrics_result.returncode == 0:
+                metrics_map = {}
+                for line in metrics_result.stdout.strip().splitlines():
+                    parts = line.split()
+                    if len(parts) >= 5:
+                        metrics_map[parts[0]] = {'cpu': parts[2], 'memory': parts[4]}
+                for node in nodes:
+                    m = metrics_map.get(node['name'])
+                    if m:
+                        node['cpu'] = m['cpu']
+                        node['memory'] = m['memory']
+        except Exception as e:
+            logger.warning("Could not get node metrics: " + str(e))
+
         return nodes
     except Exception as e:
         logger.error(f"Error getting nodes: {e}")
