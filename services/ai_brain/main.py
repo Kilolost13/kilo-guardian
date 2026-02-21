@@ -3011,7 +3011,7 @@ As Kilo, respond:"""
                     await client.post(
                         f"{socketio_url}/emit",
                         json={
-                            "event": "kilo_insight",
+                            "event": "insight_generated",
                             "data": {
                                 "content": kilo_response,
                                 "observation": obs.content,
@@ -3167,7 +3167,7 @@ Example:
                     await client.post(
                         f"{socketio_url}/emit",
                         json={
-                            "event": "kilo_insight",
+                            "event": "insight_generated",
                             "data": {
                                 "content": insight,
                                 "observation_type": obs.type,
@@ -3872,24 +3872,27 @@ Respond naturally using your gremlin personality while being genuinely helpful."
                 while iteration < max_iterations:
                     function_called = False
 
-                    # Check if Gemini wants to call a function
+                    # Check if Gemini wants to call functions (may be multiple in one turn)
                     if hasattr(response, 'candidates') and response.candidates:
                         candidate = response.candidates[0]
                         if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
-                            for part in candidate.content.parts:
-                                if hasattr(part, 'function_call') and part.function_call:
-                                    function_called = True
-                                    func_call = part.function_call
+                            # Collect ALL function calls from this turn
+                            func_calls = [
+                                part.function_call
+                                for part in candidate.content.parts
+                                if hasattr(part, 'function_call') and part.function_call
+                            ]
 
+                            if func_calls:
+                                function_called = True
+                                import asyncio
+
+                                # Execute all tool calls
+                                response_parts = []
+                                for func_call in func_calls:
                                     logging.info(f"🔧 Function call: {func_call.name}")
+                                    func_args = dict(func_call.args) if hasattr(func_call, 'args') and func_call.args else {}
 
-                                    # Extract arguments
-                                    func_args = {}
-                                    if hasattr(func_call, 'args') and func_call.args:
-                                        func_args = dict(func_call.args)
-
-                                    # Execute tool (import asyncio for async call)
-                                    import asyncio
                                     loop = asyncio.new_event_loop()
                                     asyncio.set_event_loop(loop)
                                     tool_result = loop.run_until_complete(
@@ -3897,36 +3900,31 @@ Respond naturally using your gremlin personality while being genuinely helpful."
                                     )
                                     loop.close()
 
-                                    logging.info(f"📊 Tool result: {str(tool_result)[:100]}")
+                                    logging.info(f"📊 Tool result ({func_call.name}): {str(tool_result)[:100]}")
+                                    response_parts.append({
+                                        'function_response': {
+                                            'name': func_call.name,
+                                            'response': tool_result
+                                        }
+                                    })
 
-                                    # Add to conversation history
-                                    conversation_history.append(candidate.content)
+                                # Add model turn + all function responses in one Content
+                                conversation_history.append(candidate.content)
+                                conversation_history.append(
+                                    genai_client.types.Content(role='function', parts=response_parts)
+                                )
 
-                                    # Create function response
-                                    function_response = genai_client.types.Content(
-                                        role='function',
-                                        parts=[{
-                                            'function_response': {
-                                                'name': func_call.name,
-                                                'response': tool_result
-                                            }
-                                        }]
+                                # Continue conversation with all function results
+                                response = client.models.generate_content(
+                                    model="gemini-2.0-flash",
+                                    contents=conversation_history,
+                                    config=genai_client.types.GenerateContentConfig(
+                                        tools=tools_config,
+                                        temperature=0.7,
+                                        top_p=0.95,
+                                        max_output_tokens=2048
                                     )
-                                    conversation_history.append(function_response)
-
-                                    # Continue conversation with function result
-                                    response = client.models.generate_content(
-                                        model="gemini-2.0-flash",
-                                        contents=conversation_history,
-                                        config=genai_client.types.GenerateContentConfig(
-                                            tools=tools_config,
-                                            temperature=0.7,
-                                            top_p=0.95,
-                                            max_output_tokens=2048
-                                        )
-                                    )
-
-                                    break  # Only handle first function call per iteration
+                                )
 
                     if not function_called:
                         # No more function calls, return final response
