@@ -838,6 +838,58 @@ async def lifespan(app: FastAPI):
 
     except Exception:
         pass
+
+    # Initialize session storage and load persisted history
+    _init_session_table()
+    _load_sessions_from_db()
+    logger.info("Session storage initialized and history loaded")
+
+    # Start proactive insight background loop
+    async def _proactive_insight_loop():
+        await asyncio.sleep(30)
+        while True:
+            try:
+                gemini_key = os.environ.get("GEMINI_API_KEY", "")
+                if gemini_key:
+                    conn = get_db_connection()
+                    cursor = conn.cursor()
+                    five_min_ago = (datetime.now() - timedelta(minutes=5)).isoformat()
+                    cursor.execute(
+                        "SELECT content FROM observation WHERE timestamp > ? ORDER BY id DESC LIMIT 5",
+                        (five_min_ago,)
+                    )
+                    rows = cursor.fetchall()
+                    conn.close()
+                    if rows:
+                        obs_text = chr(10).join("- " + r[0][:120] for r in rows)
+                        from google import genai as _genai
+                        _gc = _genai.Client(api_key=gemini_key)
+                        _prompt = (
+                            "You are Kilo, a sarcastic gremlin AI. Based on this recent "
+                            "desktop activity, give ONE short proactive insight (2 sentences max). "
+                            "If nothing notable, reply exactly: SKIP" + chr(10) + chr(10)
+                            + "Recent activity:" + chr(10) + obs_text
+                        )
+                        _resp = _gc.models.generate_content(
+                            model="gemini-2.0-flash",
+                            contents=_prompt,
+                            config={"max_output_tokens": 150, "temperature": 0.8}
+                        )
+                        insight = (_resp.text or "").strip()
+                        if insight and insight != "SKIP" and len(insight) > 15:
+                            async with httpx.AsyncClient(timeout=3.0) as _hc:
+                                await _hc.post(
+                                    "http://kilo-gateway:8000/emit",
+                                    json={"event": "insight_generated", "data": {"content": insight, "timestamp": datetime.now().isoformat()}}
+                                )
+                            logger.info("Proactive insight emitted: " + insight[:60])
+            except Exception as _e:
+                logger.error("Insight loop error: " + str(_e))
+            await asyncio.sleep(300)
+
+    asyncio.create_task(_proactive_insight_loop())
+    logger.info("Proactive insight loop started")
+
     yield
     # shutdown
     try:
@@ -2960,6 +3012,64 @@ user_sessions: dict = {}
 MAX_SESSION_TURNS = 10  # Keep last 10 exchanges (20 messages)
 MAX_OBSERVATIONS = 100
 
+def _init_session_table():
+    """Create conversation_session table if not exists."""
+    try:
+        conn = get_db_connection()
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS conversation_session (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                ts TEXT NOT NULL DEFAULT (datetime('now'))
+            )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Session table init failed: {e}")
+
+def _load_sessions_from_db():
+    """Load recent session history from SQLite into user_sessions dict."""
+    global user_sessions
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT DISTINCT user_id FROM conversation_session")
+        users = [row[0] for row in cursor.fetchall()]
+        for uid in users:
+            max_msgs = MAX_SESSION_TURNS * 2
+            cursor.execute(
+                "SELECT role, content FROM conversation_session WHERE user_id=? ORDER BY id DESC LIMIT ?",
+                (uid, max_msgs)
+            )
+            rows = list(reversed(cursor.fetchall()))
+            user_sessions[uid] = [{"role": r[0], "text": r[1]} for r in rows]
+        conn.close()
+        logging.getLogger(__name__).info(f"Loaded sessions for {len(users)} user(s) from DB")
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Session load failed: {e}")
+
+def _save_turn_to_db(user_id: str, role: str, text: str):
+    """Persist a single conversation turn to SQLite."""
+    try:
+        conn = get_db_connection()
+        conn.execute(
+            "INSERT INTO conversation_session (user_id, role, content) VALUES (?, ?, ?)",
+            (user_id, role, text)
+        )
+        # Keep only last MAX_SESSION_TURNS*2 rows per user
+        conn.execute("""
+            DELETE FROM conversation_session WHERE user_id=? AND id NOT IN (
+                SELECT id FROM conversation_session WHERE user_id=? ORDER BY id DESC LIMIT ?
+            )
+        """, (user_id, user_id, MAX_SESSION_TURNS * 2))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        logging.getLogger(__name__).warning(f"Session save failed: {e}")
+
 async def analyze_observation_with_llm(obs: DesktopObservation):
     """
     Use Ollama LLM to analyze desktop observation and generate insights.
@@ -3993,6 +4103,9 @@ Respond naturally using your gremlin personality while being genuinely helpful."
         max_msgs = MAX_SESSION_TURNS * 2
         if len(user_sessions[user_id]) > max_msgs:
             user_sessions[user_id] = user_sessions[user_id][-max_msgs:]
+        # Persist to SQLite so history survives pod restarts
+        _save_turn_to_db(user_id, "user", req.message)
+        _save_turn_to_db(user_id, "model", response_text.strip())
 
         return ChatResponse(response=response_text.strip(), context=req.context)
 
@@ -4006,6 +4119,67 @@ Respond naturally using your gremlin personality while being genuinely helpful."
 # Health Monitoring Integration
 import asyncio
 from pathlib import Path
+
+@app.on_event("startup")
+async def init_session_storage():
+    """Initialize session table and load persisted history."""
+    _init_session_table()
+    _load_sessions_from_db()
+    logger.info("💾 Session storage initialized")
+
+@app.on_event("startup")
+async def start_proactive_insights():
+    """Background loop: emit Kilo insights every 5 minutes based on observations."""
+    async def insight_loop():
+        await asyncio.sleep(30)  # Wait for startup to settle
+        while True:
+            try:
+                gemini_key = os.environ.get("GEMINI_API_KEY", "")
+                if not gemini_key:
+                    await asyncio.sleep(300)
+                    continue
+
+                # Grab last 5 min of observations
+                conn = get_db_connection()
+                cursor = conn.cursor()
+                five_min_ago = (datetime.now() - timedelta(minutes=5)).isoformat()
+                cursor.execute(
+                    "SELECT content, type FROM observation WHERE timestamp > ? ORDER BY id DESC LIMIT 5",
+                    (five_min_ago,)
+                )
+                rows = cursor.fetchall()
+                conn.close()
+
+                if not rows:
+                    await asyncio.sleep(300)
+                    continue
+
+                obs_text = chr(10).join(-  + r[0][:120] for r in rows)
+
+                from google import genai as _genai
+                _client = _genai.Client(api_key=gemini_key)
+                resp = _client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents="You are Kilo, a sarcastic gremlin AI. Based on this "
+                    + "recent desktop activity, give ONE short proactive insight "
+                    + "(2 sentences max). If nothing notable, say exactly: SKIP\n\n"
+                    + "Recent activity:\n" + obs_text,
+                    config={"max_output_tokens": 150, "temperature": 0.8}
+                )
+                insight = (resp.text or "").strip()
+                if insight and insight != "SKIP" and len(insight) > 15:
+                    async with httpx.AsyncClient(timeout=3.0) as hc:
+                        await hc.post(
+                            "http://kilo-gateway:8000/emit",
+                            json={"event": "insight_generated", "data": {"content": insight, "timestamp": datetime.now().isoformat()}}
+                        )
+                    logger.info(f"📡 Proactive insight emitted: {insight[:60]}")
+            except Exception as e:
+                logger.error(f"Insight loop error: {e}")
+            await asyncio.sleep(300)  # Every 5 minutes
+
+    asyncio.create_task(insight_loop())
+    logger.info("📡 Proactive insight loop started")
 
 @app.on_event("startup")
 async def start_health_monitor():
