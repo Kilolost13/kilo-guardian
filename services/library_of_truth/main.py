@@ -61,6 +61,8 @@ async def lifespan(app: FastAPI):
     yield
 
 
+kilo_nerve = KiloNerve("library")
+
 app = FastAPI(title="Library of Truth Service", lifespan=lifespan)
 
 # Health check endpoint
@@ -190,9 +192,12 @@ def search_books(q: str, limit: int = 5) -> List[dict]:
         ]
 
 @app.post("/", dependencies=[Depends(is_admin)])
-def add_entry(e: Entry):
+async def add_entry(e: Entry):
     with Session(engine) as session:
         session.add(e)
         session.commit()
         session.refresh(e)
+        
+        # KILO INTEGRATION
+        await kilo_nerve.send_observation(f"Library entry added: {e.book} p{e.page}", priority="low")
         return e

@@ -53,7 +53,7 @@ const Admin: React.FC = () => {
       const statusRes = await api.get('/admin/status');
       const [medsRes, remindersRes, habitsRes, metricsRes] = await Promise.all([
         api.get('/meds/').catch(() => ({ data: [] })),
-        api.get('/reminder/reminders').catch(() => ({ data: { reminders: [] } })),
+        api.get('/reminder/notifications/pending').catch(() => ({ data: [] })),
         api.get('/habits/').catch(() => ({ data: [] })),
         api.get('/admin/metrics/summary').catch(() => null),
       ]);
@@ -61,7 +61,7 @@ const Admin: React.FC = () => {
       setSystemStatus(statusRes.data);
       setUserStats({
         medications: medsRes.data?.length || 0,
-        reminders: remindersRes.data?.reminders?.length || 0,
+        reminders: remindersRes.data?.length || 0,
         habits: habitsRes.data?.length || 0,
         daysTracking: calculateDaysTracking(medsRes.data || []),
         prescriptionsScanned: (medsRes.data || []).filter((m: any) => m.from_ocr).length || 0,
@@ -84,15 +84,16 @@ const Admin: React.FC = () => {
     fetchAdminData();
   }, [fetchAdminData]);
 
-  const createBackup = async () => {
-    try {
-      await api.post('/admin/backup');
-      alert('Backup created successfully!');
-    } catch (error) {
-      console.error('Failed to create backup:', error);
-      alert('Failed to create backup');
-    }
-  };
+  // Backup endpoint not implemented yet
+  // const createBackup = async () => {
+  //   try {
+  //     await api.post('/admin/backup');
+  //     alert('Backup created successfully!');
+  //   } catch (error) {
+  //     console.error('Failed to create backup:', error);
+  //     alert('Failed to create backup');
+  //   }
+  // };
 
   const testMLPrediction = async () => {
     setMlTesting(true);
@@ -264,6 +265,7 @@ const Admin: React.FC = () => {
               <div className="grid grid-cols-4 gap-4">
                 {/* Buttons in first column, stacked vertically */}
                 <div className="col-span-1 flex flex-col gap-4">
+                  {/* Backup buttons disabled - endpoint not implemented
                   <Button onClick={createBackup} variant="primary" size="lg" className="h-24">
                     💾 CREATE BACKUP
                   </Button>
@@ -272,6 +274,7 @@ const Admin: React.FC = () => {
                       🔄 RESTORE BACKUP
                     </Button>
                   )}
+                  */}
                   <Button onClick={() => {}} variant="danger" size="lg" className="h-24">
                     🗑️ CLEAR CACHE
                   </Button>

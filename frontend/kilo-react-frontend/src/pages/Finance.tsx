@@ -576,7 +576,7 @@ const Finance: React.FC = () => {
             >
               ← BACK
             </Button>
-            <h1 className="text-xl font-bold text-zombie-green terminal-glow">💰 FINANCE</h1>
+            <h1 className="font-header text-xl text-zombie-green neon-text">💰 FINANCE</h1>
           </div>
           <div className="flex gap-2">
             <Button
@@ -621,7 +621,7 @@ const Finance: React.FC = () => {
           <Card className="py-2 px-3">
             <div className="text-center">
               <p className="text-xs text-zombie-green mb-1">Income</p>
-              <p className="text-lg font-bold text-green-400">
+              <p className="text-lg font-bold text-zombie-green">
                 {formatCurrency(summary.total_income)}
               </p>
             </div>
@@ -630,7 +630,7 @@ const Finance: React.FC = () => {
           <Card className="py-2 px-3">
             <div className="text-center">
               <p className="text-xs text-zombie-green mb-1">Expenses</p>
-              <p className="text-lg font-bold text-red-400">
+              <p className="text-lg font-bold text-blood-red">
                 {formatCurrency(summary.total_expenses)}
               </p>
             </div>
@@ -639,7 +639,7 @@ const Finance: React.FC = () => {
           <Card className="py-2 px-3">
             <div className="text-center">
               <p className="text-xs text-zombie-green mb-1">Balance</p>
-              <p className={`text-lg font-bold ${summary.balance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              <p className={`text-lg font-bold ${summary.balance >= 0 ? 'text-zombie-green' : 'text-blood-red'}`}>
                 {formatCurrency(summary.balance)}
               </p>
             </div>
@@ -763,7 +763,7 @@ const Finance: React.FC = () => {
                         </span>
                         <button
                           onClick={() => handleDeleteDocument(doc.id)}
-                          className="ml-2 text-xs text-red-300 hover:text-red-500 underline"
+                          className="ml-2 text-xs text-red-300 hover:text-blood-red underline"
                           title="Delete document and its transactions"
                         >
                           Delete
@@ -771,10 +771,10 @@ const Finance: React.FC = () => {
                       </div>
                     </div>
                     <p className="text-xs text-zombie-green">
-                      Transactions extracted: <span className="font-bold text-green-400">{doc.transaction_count}</span>
+                      Transactions extracted: <span className="font-bold text-zombie-green">{doc.transaction_count}</span>
                     </p>
                     {doc.error && (
-                      <p className="text-xs text-red-400 mt-1">Error: {doc.error}</p>
+                      <p className="text-xs text-blood-red mt-1">Error: {doc.error}</p>
                     )}
                   </div>
                 ))}
@@ -813,7 +813,7 @@ const Finance: React.FC = () => {
                       {analytics.top_categories.map(([category, amount], idx) => (
                         <div key={idx} className="flex justify-between items-center p-2 bg-zombie-dark rounded">
                           <span className="text-sm text-zombie-green font-semibold capitalize">{category}</span>
-                          <span className="text-sm text-red-400 font-bold">${amount.toFixed(2)}</span>
+                          <span className="text-sm text-blood-red font-bold">${amount.toFixed(2)}</span>
                         </div>
                       ))}
                     </div>
@@ -954,7 +954,7 @@ const Finance: React.FC = () => {
               {showBudgets ? '▼' : '▶'} 📊 BUDGETS
             </h2>
             <button
-              className="px-3 py-1 text-sm bg-blue-500 text-white font-semibold rounded hover:bg-blue-600"
+              className="px-3 py-1 text-sm bg-blue-500 text-white font-semibold rounded hover:bg-dark-card"
               onClick={(e) => {
                 e.stopPropagation();
                 setShowAddBudget(!showAddBudget);
@@ -1016,7 +1016,7 @@ const Finance: React.FC = () => {
                 <div className="flex gap-2">
                   <button
                     type="submit"
-                    className="flex-1 px-4 py-2 text-sm bg-blue-500 text-white font-semibold rounded hover:bg-blue-600"
+                    className="flex-1 px-4 py-2 text-sm bg-blue-500 text-white font-semibold rounded hover:bg-dark-card"
                   >
                     Add Budget
                   </button>
@@ -1079,14 +1079,14 @@ const Finance: React.FC = () => {
                         </div>
                         <div className="flex items-center gap-2">
                           <span className={`text-sm font-bold ${
-                            percentage >= 100 ? 'text-red-400' :
-                            percentage >= 80 ? 'text-yellow-400' : 'text-green-400'
+                            percentage >= 100 ? 'text-blood-red' :
+                            percentage >= 80 ? 'text-neon-blue' : 'text-zombie-green'
                           }`}>
                             {percentageDisplay}
                           </span>
                           <button
                             onClick={() => handleDeleteBudget(budget.id)}
-                            className="text-red-500 hover:text-red-700 text-lg"
+                            className="text-blood-red hover:text-red-700 text-lg"
                           >
                             ×
                           </button>
@@ -1099,10 +1099,10 @@ const Finance: React.FC = () => {
                         ></div>
                       </div>
                       {percentage >= 100 && (
-                        <p className="text-xs text-red-400 font-semibold">⚠️ Over budget!</p>
+                        <p className="text-xs text-blood-red font-semibold">⚠️ Over budget!</p>
                       )}
                       {percentage >= 80 && percentage < 100 && (
-                        <p className="text-xs text-yellow-400 font-semibold">⚠️ Approaching limit</p>
+                        <p className="text-xs text-neon-blue font-semibold">⚠️ Approaching limit</p>
                       )}
                     </div>
                   </Card>
@@ -1234,12 +1234,12 @@ const Finance: React.FC = () => {
                           </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-blue-400">
+                          <span className="text-sm font-bold text-zombie-green">
                             {progressDisplay}
                           </span>
                           <button
                             onClick={() => handleDeleteGoal(goal.id)}
-                            className="text-red-500 hover:text-red-700 text-lg"
+                            className="text-blood-red hover:text-red-700 text-lg"
                           >
                             ×
                           </button>
@@ -1256,7 +1256,7 @@ const Finance: React.FC = () => {
                         <span>📈 Est. completion: {estimateCompletionDate(goal.current_amount, goal.target_amount, monthlyRate)}</span>
                       </div>
                       {progress >= 100 && (
-                        <p className="text-xs text-green-400 font-semibold">🎉 Goal achieved!</p>
+                        <p className="text-xs text-zombie-green font-semibold">🎉 Goal achieved!</p>
                       )}
                     </div>
                   </Card>
@@ -1276,7 +1276,7 @@ const Finance: React.FC = () => {
               {showBills ? '▼' : '▶'} 💳 RECURRING BILLS
             </h2>
             <button
-              className="px-3 py-1 text-sm bg-blue-500 text-white font-semibold rounded hover:bg-blue-600"
+              className="px-3 py-1 text-sm bg-blue-500 text-white font-semibold rounded hover:bg-dark-card"
               onClick={(e) => {
                 e.stopPropagation();
                 setShowAddBill(!showAddBill);
@@ -1373,7 +1373,7 @@ const Finance: React.FC = () => {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-bold text-red-400">{formatCurrency(Math.abs(bill.amount))}</p>
+                      <p className="text-sm font-bold text-blood-red">{formatCurrency(Math.abs(bill.amount))}</p>
                       <p className="text-xs text-zombie-green">monthly</p>
                     </div>
                   </div>
@@ -1508,15 +1508,15 @@ const Finance: React.FC = () => {
               <div className="grid grid-cols-3 gap-2 pt-2 border-t border-zombie-green/30">
                 <div className="text-center">
                   <p className="text-xs text-zombie-green">Filtered Income</p>
-                  <p className="text-sm font-bold text-green-400">{formatCurrency(filteredSummary.total_income)}</p>
+                  <p className="text-sm font-bold text-zombie-green">{formatCurrency(filteredSummary.total_income)}</p>
                 </div>
                 <div className="text-center">
                   <p className="text-xs text-zombie-green">Filtered Expenses</p>
-                  <p className="text-sm font-bold text-red-400">{formatCurrency(filteredSummary.total_expenses)}</p>
+                  <p className="text-sm font-bold text-blood-red">{formatCurrency(filteredSummary.total_expenses)}</p>
                 </div>
                 <div className="text-center">
                   <p className="text-xs text-zombie-green">Filtered Balance</p>
-                  <p className={`text-sm font-bold ${filteredSummary.balance >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  <p className={`text-sm font-bold ${filteredSummary.balance >= 0 ? 'text-zombie-green' : 'text-blood-red'}`}>
                     {formatCurrency(filteredSummary.balance)}
                   </p>
                 </div>
@@ -1584,7 +1584,7 @@ const Finance: React.FC = () => {
                       {formatDate(transaction.date)}
                     </td>
                     <td className={`px-2 py-2 text-right font-bold ${
-                      transaction.transaction_type === 'income' ? 'text-green-400' : 'text-red-400'
+                      transaction.transaction_type === 'income' ? 'text-zombie-green' : 'text-blood-red'
                     }`}>
                       {transaction.transaction_type === 'income' ? '+' : '-'}
                       {formatCurrency(Math.abs(transaction.amount))}
@@ -1601,7 +1601,7 @@ const Finance: React.FC = () => {
                     <td className="px-2 py-2 text-center">
                       <button
                         onClick={() => handleDeleteTransaction(transaction.id)}
-                        className="text-red-500 hover:text-red-700 font-bold text-lg hover:bg-red-500/20 px-2 py-1 rounded"
+                        className="text-blood-red hover:text-red-700 font-bold text-lg hover:bg-red-500/20 px-2 py-1 rounded"
                         title="Delete transaction"
                       >
                         ×

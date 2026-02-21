@@ -1054,7 +1054,7 @@ DEBUG=1 python3 ai_brain/main.py
 **Solutions:**
 ```bash
 # Clear cache and reinstall
-rm -rf node_modules package-lock.json
+# rm -rf node_modules package-lock.json
 npm install
 
 # Check Node.js version

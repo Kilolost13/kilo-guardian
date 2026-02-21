@@ -19,12 +19,30 @@ export const NotificationCenter: React.FC = () => {
         );
         if (response.ok) {
           const data = await response.json();
-          const newNotifications = data.notifications || [];
-          
-          // Add only new notifications (not already in state)
+          const rawList: any[] = Array.isArray(data) ? data : (data.notifications || []);
+
+          const transformed: NotificationData[] = rawList.map((item: any) => {
+            const msg = (item.message || item.text || '').toLowerCase();
+            let channel = 'reminder';
+            if (msg.includes('med') || msg.includes('pill') || msg.includes('effexor') ||
+                msg.includes('adderall') || msg.includes('buspirone') || msg.includes('💊')) {
+              channel = 'med';
+            } else if (msg.includes('habit')) {
+              channel = 'habit';
+            }
+            return {
+              id: item.id,
+              channel,
+              payload_json: JSON.stringify({
+                text: item.message || item.text || 'Reminder',
+                when: item.timestamp || item.when || item.created_at || '',
+              }),
+              created_at: item.timestamp || item.created_at || new Date().toISOString(),
+            };
+          });
+
           const existingIds = new Set(notifications.map(n => n.id));
-          const toAdd = newNotifications.filter((n: NotificationData) => !existingIds.has(n.id));
-          
+          const toAdd = transformed.filter((n: NotificationData) => !existingIds.has(n.id));
           if (toAdd.length > 0) {
             setNotifications(prev => [...prev, ...toAdd]);
           }
@@ -34,10 +52,8 @@ export const NotificationCenter: React.FC = () => {
       }
     };
 
-    // Poll every 30 seconds
     const interval = setInterval(pollNotifications, 30000);
-    pollNotifications(); // Initial fetch
-
+    pollNotifications();
     return () => clearInterval(interval);
   }, [notifications]);
 

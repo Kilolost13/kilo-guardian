@@ -241,7 +241,7 @@ const Habits: React.FC = () => {
   return (
     <div className="min-h-screen zombie-gradient p-2">
       <div className="flex justify-between items-center mb-2">
-        <h1 className="text-xl font-bold text-zombie-green terminal-glow">✓ HABITS</h1>
+        <h1 className="font-header text-xl text-zombie-green neon-text">✓ HABITS</h1>
         <Button onClick={() => navigate('/dashboard')} variant="secondary" size="sm">
           ← BACK
         </Button>
@@ -280,20 +280,20 @@ const Habits: React.FC = () => {
                     <div className="flex items-center gap-2 mb-1">
                       <span className="text-3xl">{habitIcons[parseInt(habit.id) % habitIcons.length]}</span>
                       <div>
-                        <h3 className="text-lg font-bold text-gray-800">{habit.name}</h3>
-                        <p className="text-xs text-gray-600">{habit.frequency} • Target: {habit.target_count}x</p>
+                        <h3 className="text-lg font-bold text-zombie-green">{habit.name}</h3>
+                        <p className="text-xs text-zombie-green/60">{habit.frequency} • Target: {habit.target_count}x</p>
                       </div>
                     </div>
 
                     {/* Progress Bar */}
                     <div className="my-2">
-                      <div className="flex justify-between text-xs text-gray-600 mb-1">
+                      <div className="flex justify-between text-xs text-zombie-green/60 mb-1">
                         <span>Progress: {completionCount} / {habit.target_count}</span>
                         <span>{Math.min(Math.round(progress), 100)}%</span>
                       </div>
                       <div className="w-full bg-gray-300 rounded-full h-4">
                         <div
-                          className={`h-4 rounded-full transition-all ${isCompleted ? 'bg-green-600' : 'bg-blue-600'}`}
+                          className={`h-4 rounded-full transition-all ${isCompleted ? 'bg-zombie-green' : 'bg-dark-card'}`}
                           style={{ width: `${Math.min(progress, 100)}%` }}
                         ></div>
                       </div>
@@ -315,7 +315,7 @@ const Habits: React.FC = () => {
                             <div className="text-xs font-bold text-blue-800">
                               Kilo's Prediction: {Math.round(predictions.get(habit.id)!.completion_probability * 100)}% likely to complete
                             </div>
-                            <div className="text-xs text-blue-600 mt-1">
+                            <div className="text-xs text-zombie-green mt-1">
                               {predictions.get(habit.id)!.recommendation}
                             </div>
                           </div>
@@ -367,7 +367,7 @@ const Habits: React.FC = () => {
       {showAddHabit && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
           <Card className="w-full max-w-2xl">
-            <h2 className="text-2xl font-bold text-zombie-green terminal-glow mb-4">➕ ADD HABIT</h2>
+            <h2 className="font-header text-xl text-zombie-green neon-text mb-4">➕ ADD HABIT</h2>
             <div className="space-y-3">
               <div>
                 <label className="block text-zombie-green font-semibold mb-1">Habit Name:</label>
@@ -378,7 +378,7 @@ const Habits: React.FC = () => {
                     setHabitForm({ ...habitForm, name: e.target.value });
                     fetchSuggestedTimes(e.target.value);
                   }}
-                  className="w-full p-2 bg-gray-800 border border-zombie-green text-zombie-green rounded"
+                  className="w-full p-2 bg-dark-bg border border-zombie-green text-zombie-green rounded"
                   placeholder="e.g., Drink Water, Exercise, Read"
                 />
               </div>
@@ -392,7 +392,7 @@ const Habits: React.FC = () => {
                   </div>
                   <div className="flex flex-wrap gap-2 mb-2">
                     {suggestedTimes.map((time, idx) => (
-                      <span key={idx} className="bg-blue-600 text-white px-3 py-1 rounded-full text-sm font-semibold">
+                      <span key={idx} className="bg-dark-card text-white px-3 py-1 rounded-full text-sm font-semibold">
                         ⏰ {time}
                       </span>
                     ))}
@@ -408,7 +408,7 @@ const Habits: React.FC = () => {
                 <select
                   value={habitForm.frequency}
                   onChange={(e) => setHabitForm({ ...habitForm, frequency: e.target.value as 'daily'|'weekly'|'monthly' })}
-                  className="w-full p-2 bg-gray-800 border border-zombie-green text-zombie-green rounded"
+                  className="w-full p-2 bg-dark-bg border border-zombie-green text-zombie-green rounded"
                 >
                   <option value="daily">Daily</option>
                   <option value="weekly">Weekly</option>
@@ -422,7 +422,7 @@ const Habits: React.FC = () => {
                   min="1"
                   value={habitForm.target_count}
                   onChange={(e) => setHabitForm({ ...habitForm, target_count: parseInt(e.target.value) || 1 })}
-                  className="w-full p-2 bg-gray-800 border border-zombie-green text-zombie-green rounded"
+                  className="w-full p-2 bg-dark-bg border border-zombie-green text-zombie-green rounded"
                   placeholder="e.g., 8 (glasses of water)"
                 />
               </div>
@@ -443,7 +443,7 @@ const Habits: React.FC = () => {
       {editingHabit && (
         <div className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center p-4 z-50">
           <Card className="w-full max-w-2xl">
-            <h2 className="text-2xl font-bold text-zombie-green terminal-glow mb-4">✏️ EDIT HABIT</h2>
+            <h2 className="font-header text-xl text-zombie-green neon-text mb-4">✏️ EDIT HABIT</h2>
             <div className="space-y-3">
               <div>
                 <label className="block text-zombie-green font-semibold mb-1">Habit Name:</label>
@@ -451,7 +451,7 @@ const Habits: React.FC = () => {
                   type="text"
                   value={habitForm.name}
                   onChange={(e) => setHabitForm({ ...habitForm, name: e.target.value })}
-                  className="w-full p-2 bg-gray-800 border border-zombie-green text-zombie-green rounded"
+                  className="w-full p-2 bg-dark-bg border border-zombie-green text-zombie-green rounded"
                 />
               </div>
               <div>
@@ -459,7 +459,7 @@ const Habits: React.FC = () => {
                 <select
                   value={habitForm.frequency}
                   onChange={(e) => setHabitForm({ ...habitForm, frequency: e.target.value as 'daily'|'weekly'|'monthly' })}
-                  className="w-full p-2 bg-gray-800 border border-zombie-green text-zombie-green rounded"
+                  className="w-full p-2 bg-dark-bg border border-zombie-green text-zombie-green rounded"
                 >
                   <option value="daily">Daily</option>
                   <option value="weekly">Weekly</option>
@@ -473,7 +473,7 @@ const Habits: React.FC = () => {
                   min="1"
                   value={habitForm.target_count}
                   onChange={(e) => setHabitForm({ ...habitForm, target_count: parseInt(e.target.value) || 1 })}
-                  className="w-full p-2 bg-gray-800 border border-zombie-green text-zombie-green rounded"
+                  className="w-full p-2 bg-dark-bg border border-zombie-green text-zombie-green rounded"
                 />
               </div>
               <div className="flex gap-3 mt-4">

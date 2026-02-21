@@ -3,6 +3,10 @@ USB Transfer API Service
 Provides REST endpoints for secure USB data transfer operations
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from kilo_integration import KiloNerve
 from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field
@@ -20,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 # Security
 security = HTTPBearer()
+
+kilo_nerve = KiloNerve("usb_transfer")
 
 app = FastAPI(
     title="KILO USB Transfer Service",

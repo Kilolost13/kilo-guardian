@@ -230,7 +230,7 @@ const Medications: React.FC = () => {
   return (
     <div className="min-h-screen zombie-gradient p-2">
       <div className="flex justify-between items-center mb-2">
-        <h1 className="text-xl font-bold text-zombie-green terminal-glow">💊 MEDICATIONS</h1>
+        <h1 className="font-header text-xl text-zombie-green neon-text">💊 MEDICATIONS</h1>
         <Button onClick={() => navigate('/dashboard')} variant="secondary" size="sm">
           ← BACK
         </Button>
@@ -388,12 +388,12 @@ const Medications: React.FC = () => {
 
       {scanResult && (
         <Card className="mb-2 py-2 px-3">
-          <div className={scanResult.success ? 'text-green-600' : 'text-yellow-600'}>
+          <div className={scanResult.success ? 'text-zombie-green' : 'text-yellow-600'}>
             <p className="text-lg font-semibold mb-2">{scanResult.message}</p>
             {scanResult.data && ('ocr_text' in scanResult.data) && (
               <details className="mt-2">
                 <summary className="cursor-pointer text-sm underline">View OCR Text</summary>
-                <pre className="text-xs mt-2 p-2 bg-gray-100 rounded overflow-auto max-h-40">
+                <pre className="text-xs mt-2 p-2 bg-dark-card rounded overflow-auto max-h-40">
                   {(scanResult.data as { ocr_text?: string }).ocr_text}
                 </pre>
               </details>
@@ -431,7 +431,7 @@ const Medications: React.FC = () => {
             <Card key={med.id} className="py-2 px-3">
               <div className="flex justify-between items-start gap-3">
                 <div className="flex-1 min-w-0">
-                  <h3 className="text-xl font-bold text-zombie-green terminal-glow mb-1">{med.name || '(No name)'}</h3>
+                  <h3 className="font-header text-xl text-zombie-green neon-text mb-1">{med.name || '(No name)'}</h3>
                   <div className="text-sm text-zombie-green space-y-0.5">
                     <p>💊 Dosage: <span className="font-semibold">{med.dosage || 'N/A'}</span></p>
                     <p>⏰ Schedule: <span className="font-semibold">{med.schedule || 'N/A'}</span></p>
@@ -490,7 +490,7 @@ const Medications: React.FC = () => {
                   type="text"
                   value={editForm.name}
                   onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                  className="w-full p-3 bg-gray-800 border border-zombie-green text-zombie-green rounded text-lg"
+                  className="w-full p-3 bg-dark-bg border-2 border-zombie-green/60 text-zombie-green rounded focus:border-zombie-green focus:outline-none"
                   placeholder="e.g., LISINOPRIL"
                 />
               </div>
@@ -500,7 +500,7 @@ const Medications: React.FC = () => {
                   type="text"
                   value={editForm.dosage}
                   onChange={(e) => setEditForm({ ...editForm, dosage: e.target.value })}
-                  className="w-full p-3 bg-gray-800 border border-zombie-green text-zombie-green rounded text-lg"
+                  className="w-full p-3 bg-dark-bg border-2 border-zombie-green/60 text-zombie-green rounded focus:border-zombie-green focus:outline-none"
                   placeholder="e.g., 10mg"
                 />
               </div>
@@ -510,7 +510,7 @@ const Medications: React.FC = () => {
                   type="text"
                   value={editForm.schedule}
                   onChange={(e) => setEditForm({ ...editForm, schedule: e.target.value })}
-                  className="w-full p-3 bg-gray-800 border border-zombie-green text-zombie-green rounded text-lg"
+                  className="w-full p-3 bg-dark-bg border-2 border-zombie-green/60 text-zombie-green rounded focus:border-zombie-green focus:outline-none"
                   placeholder="e.g., Once daily"
                 />
               </div>
@@ -520,7 +520,7 @@ const Medications: React.FC = () => {
                   type="text"
                   value={editForm.prescriber}
                   onChange={(e) => setEditForm({ ...editForm, prescriber: e.target.value })}
-                  className="w-full p-3 bg-gray-800 border border-zombie-green text-zombie-green rounded text-lg"
+                  className="w-full p-3 bg-dark-bg border-2 border-zombie-green/60 text-zombie-green rounded focus:border-zombie-green focus:outline-none"
                   placeholder="e.g., Dr. Smith"
                 />
               </div>
@@ -530,7 +530,7 @@ const Medications: React.FC = () => {
                   type="number"
                   value={editForm.quantity}
                   onChange={(e) => setEditForm({ ...editForm, quantity: parseInt(e.target.value) || 0 })}
-                  className="w-full p-3 bg-gray-800 border border-zombie-green text-zombie-green rounded text-lg"
+                  className="w-full p-3 bg-dark-bg border-2 border-zombie-green/60 text-zombie-green rounded focus:border-zombie-green focus:outline-none"
                   placeholder="e.g., 30"
                 />
               </div>
@@ -539,7 +539,7 @@ const Medications: React.FC = () => {
                 <textarea
                   value={editForm.instructions}
                   onChange={(e) => setEditForm({ ...editForm, instructions: e.target.value })}
-                  className="w-full p-3 bg-gray-800 border border-zombie-green text-zombie-green rounded text-lg"
+                  className="w-full p-3 bg-dark-bg border-2 border-zombie-green/60 text-zombie-green rounded focus:border-zombie-green focus:outline-none"
                   placeholder="e.g., Take with water"
                   rows={3}
                 />

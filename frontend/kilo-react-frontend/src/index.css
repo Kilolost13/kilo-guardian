@@ -1,58 +1,117 @@
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-body {
+:root {
+  --kilo-black: #050505;
+  --kilo-zombie-green: #39FF14;
+  --kilo-red: #FF0000;
+  --kilo-yellow: #FFFF00;
+  --kilo-dim: rgba(57, 255, 20, 0.2);
+  --term-gray: #1a1a1a;
+}
+
+* {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
-    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
-    sans-serif;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--kilo-black);
+  font-family: 'Share Tech Mono', monospace;
+  color: #e0e0e0;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-code {
-  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
-    monospace;
+/* Header font utility */
+.font-header {
+  font-family: 'Orbitron', sans-serif;
 }
 
-/* Custom utility classes */
-@layer utilities {
-  .terminal-glow {
-    text-shadow: 0 0 10px #00ff41, 0 0 20px #00ff41;
-  }
-
-  .terminal-text {
-    font-family: 'Courier New', 'JetBrains Mono', 'Fira Code', monospace;
-  }
-
-  .zombie-gradient {
-    background: linear-gradient(135deg, #0a0e0f 0%, #1a1f20 50%, #0a0e0f 100%);
-  }
-
-  .glass-effect {
-    background: rgba(26, 31, 32, 0.8);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(0, 255, 65, 0.2);
-  }
-
-  .neon-border {
-    box-shadow: 0 0 5px #00ff41, inset 0 0 5px #00ff41;
-  }
+/* Neon border glow */
+.neon-border {
+  box-shadow: 0 0 10px #39FF14, inset 0 0 5px #39FF14;
+  border: 1px solid #39FF14;
 }
 
-/* Notification animations */
+/* Neon text glow */
+.neon-text {
+  text-shadow: 0 0 5px #39FF14;
+  color: #39FF14;
+}
+
+/* Scanline sweep overlay */
+.scanline {
+  width: 100%;
+  height: 100px;
+  z-index: 50;
+  background: linear-gradient(0deg, rgba(0,0,0,0) 0%, rgba(57, 255, 20, 0.1) 50%, rgba(0,0,0,0) 100%);
+  opacity: 0.15;
+  position: fixed;
+  bottom: 100%;
+  animation: scanline 10s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes scanline {
+  0%  { bottom: 100%; }
+  100%{ bottom: -100%; }
+}
+
+/* Grid background pattern */
+.grid-bg {
+  background-image: linear-gradient(rgba(57, 255, 20, 0.08) 1px, transparent 1px),
+                    linear-gradient(90deg, rgba(57, 255, 20, 0.08) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Glassmorphism panel */
+.glass-panel {
+  background: rgba(26, 26, 26, 0.85);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(57, 255, 20, 0.25);
+}
+
+/* Glow colours */
+.glow-green  { text-shadow: 0 0 10px var(--kilo-zombie-green); color: var(--kilo-zombie-green); }
+.glow-yellow { text-shadow: 0 0 10px var(--kilo-yellow);       color: var(--kilo-yellow); }
+.glow-red    { text-shadow: 0 0 10px var(--kilo-red);          color: var(--kilo-red); animation: pulse-red 1s infinite; }
+
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+/* Status bar (top strip) */
+.status-bar {
+  width: 100%;
+  height: 40px;
+  background-color: var(--term-gray);
+  border-bottom: 2px solid var(--kilo-zombie-green);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 20px;
+  box-shadow: 0 0 15px var(--kilo-dim);
+}
+
+/* Scrollbar */
+::-webkit-scrollbar       { width: 6px; }
+::-webkit-scrollbar-track { background: #0a0a0a; }
+::-webkit-scrollbar-thumb { background: #39FF14; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2dd10d; }
+
+/* Notification slide-in */
 @keyframes slide-in {
-  from {
-    transform: translateX(400px);
-    opacity: 0;
-  }
-  to {
-    transform: translateX(0);
-    opacity: 1;
-  }
+  from { transform: translateX(400px); opacity: 0; }
+  to   { transform: translateX(0);     opacity: 1; }
 }
+.animate-slide-in { animation: slide-in 0.3s ease-out; }
 
-.animate-slide-in {
-  animation: slide-in 0.3s ease-out;
-}
+/* Clip-path accents (from Angular) */
+.clip-path-slant  { clip-path: polygon(0 0, 100% 0, 100% 85%, 95% 100%, 0 100%); }
+.clip-path-button { clip-path: polygon(5% 0, 100% 0, 95% 100%, 0 100%); }

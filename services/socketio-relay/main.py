@@ -3,6 +3,10 @@ Simple Socket.IO relay service for Kilo AI
 Provides WebSocket support for real-time frontend updates
 """
 import socketio
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from kilo_integration import KiloNerve
 import uvicorn
 from fastapi import FastAPI
 import logging
@@ -15,6 +19,8 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="Socket.IO Relay")
 
 # Create Socket.IO server
+kilo_nerve = KiloNerve("socketio")
+
 sio = socketio.AsyncServer(
     async_mode='asgi',
     cors_allowed_origins='*',
@@ -34,6 +40,27 @@ socket_app = socketio.ASGIApp(
 @app.get("/status")
 async def health():
     return {"status": "ok", "service": "socketio-relay"}
+
+
+@app.post("/emit")
+async def emit_notification(payload: dict):
+    """
+    Emit a notification to all connected Socket.IO clients
+    Called by gateway when reminders/alerts need to be pushed to frontend
+    """
+    try:
+        event = payload.get("event", "notification")
+        data = payload.get("data", {})
+
+        # Broadcast to all connected clients
+        await sio.emit(event, data)
+
+        logger.info(f"🔔 Broadcasted {event}: {data.get('content', '')[:50]}")
+        return {"status": "ok", "message": f"Emitted {event} to all clients"}
+
+    except Exception as e:
+        logger.error(f"Failed to emit: {e}")
+        return {"status": "error", "message": str(e)}
 
 @sio.event
 async def connect(sid, environ):

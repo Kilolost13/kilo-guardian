@@ -8,7 +8,7 @@ authors = ["Kilo <kilo@example.com>"]
 python = ">=3.11,<4.0"
 fastapi = "^0.100"
 uvicorn = "^0.22"
-sqlmodel = "^0.0.8"
+sqlmodel = "^0.0.22"
 pytesseract = "^0.3.10"
 pillow = "^10.0.0"
 requests = "^2.31.0"
@@ -16,8 +16,10 @@ python-multipart = "^0.0.9"
 gTTS = "^2.3.0"
 openai = "^1.0.0"
 tenacity = "^8.2.2"
+networkx = "^3.2"
 apscheduler = "^3.10.1"
 prometheus-client = "^0.16.0"
+google-genai = "^1.0.0"
 
 [build-system]
 requires = ["poetry-core>=1.5.0"]

@@ -252,3 +252,9 @@ docs/.doctrees/
 .vscode/launch.json
 .vscode/extensions.json
 services/library_of_truth/books/*.pdf
+
+# Backup and temp files
+*.backup*
+*.tmp
+*.backup_*
+angular-dist/

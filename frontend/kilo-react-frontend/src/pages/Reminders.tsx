@@ -114,7 +114,7 @@ const Reminders: React.FC = () => {
             >
               ← BACK
             </Button>
-            <h1 className="text-xl font-bold text-zombie-green terminal-glow">🔔 REMINDERS</h1>
+            <h1 className="font-header text-xl text-zombie-green neon-text">🔔 REMINDERS</h1>
           </div>
           <div className="flex gap-2">
             <Button
@@ -249,7 +249,7 @@ const Reminders: React.FC = () => {
               <div className="flex gap-3">
                 <button
                   type="submit"
-                  className="flex-1 px-6 py-3 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 transition-all min-h-[56px]"
+                  className="flex-1 px-6 py-3 bg-green-500 text-white font-semibold rounded-lg hover:bg-zombie-green transition-all min-h-[56px]"
                 >
                   Create Reminder
                 </button>
@@ -287,7 +287,7 @@ const Reminders: React.FC = () => {
                   </h3>
                   <button
                     onClick={() => handleDeleteReminder(reminder.id)}
-                    className="text-red-500 hover:text-red-700 text-xl font-bold hover:bg-red-500/20 px-2 py-1 rounded"
+                    className="text-blood-red hover:text-red-700 text-xl font-bold hover:bg-red-500/20 px-2 py-1 rounded"
                     title="Delete reminder"
                   >
                     ×

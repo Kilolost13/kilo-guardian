@@ -11,12 +11,18 @@ Currently supports:
 This is a skeleton implementation - expand as needed!
 """
 
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from kilo_integration import KiloNerve
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 import os
 from typing import Optional
 import io
+
+kilo_nerve = KiloNerve("voice")
 
 app = FastAPI(title="Kilo Voice Service")
 

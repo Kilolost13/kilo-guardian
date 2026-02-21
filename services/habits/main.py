@@ -1,417 +1,119 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
-from sqlmodel import SQLModel, create_engine, Session, Field
-from typing import Optional, List
 import os
-import httpx
+import sys
+import asyncio
 import datetime
 import json
+from typing import Optional, List
 
-# Habit models
-class Habit(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    frequency: str = "daily"
-    target_count: int = 1
-    active: bool = True
-    med_id: Optional[int] = Field(default=None, index=True)
-    preferred_times: Optional[str] = None  # comma-separated HH:MM
-    created_at: str = Field(default_factory=lambda: datetime.datetime.utcnow().isoformat())
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Request
+from sqlmodel import Session, select, create_engine
+import httpx
 
-class HabitCompletion(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    habit_id: int
-    completion_date: str
-    count: int = 1
-    reminder_id: Optional[int] = None
-    status: Optional[str] = None  # completed | skipped
-    med_id: Optional[int] = None
+# Add shared directory to path
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-db_url = "sqlite:////tmp/habits.db"
-engine = create_engine(db_url, echo=False)
+from shared.models import Habit, HabitCompletion
+from shared.utils.persona import get_quip
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from kilo_integration import KiloNerve
+from autonomy import get_today_habit_status
 
+# Use shared database path from PVC
+db_url = os.getenv("DATABASE_URL", "sqlite:////app/kilo_data/kilo_guardian.db")
+engine = create_engine(db_url, connect_args={"check_same_thread": False})
 
-def _ensure_columns():
-    """Best-effort schema drift fixer for new columns when using SQLite."""
-    try:
-        with engine.connect() as conn:
-            cols = conn.execute("PRAGMA table_info(habit)").fetchall()
-            col_names = {c[1] for c in cols}
-            if 'med_id' not in col_names:
-                conn.execute("ALTER TABLE habit ADD COLUMN med_id INTEGER")
-            if 'preferred_times' not in col_names:
-                conn.execute("ALTER TABLE habit ADD COLUMN preferred_times VARCHAR")
-            if 'created_at' not in col_names:
-                conn.execute("ALTER TABLE habit ADD COLUMN created_at VARCHAR")
-        with engine.connect() as conn:
-            cols = conn.execute("PRAGMA table_info(habitcompletion)").fetchall()
-            col_names = {c[1] for c in cols}
-            if 'reminder_id' not in col_names:
-                conn.execute("ALTER TABLE habitcompletion ADD COLUMN reminder_id INTEGER")
-            if 'status' not in col_names:
-                conn.execute("ALTER TABLE habitcompletion ADD COLUMN status VARCHAR")
-            if 'med_id' not in col_names:
-                conn.execute("ALTER TABLE habitcompletion ADD COLUMN med_id INTEGER")
-    except Exception as e:
-        print("[HABITS] Schema check failed (non-fatal):", e)
+app = FastAPI(title="Kilo Habits Service - Gremlin Edition 😈")
 
+# Initialize Kilo nerve
+kilo_nerve = KiloNerve("habits")
 
-from contextlib import asynccontextmanager
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    try:
-        SQLModel.metadata.create_all(engine)
-        _ensure_columns()
-    except Exception:
-        pass
-    yield
-
-
-app = FastAPI(title="Habits Service", lifespan=lifespan)
-
-# Health check endpoints
-@app.get("/status")
 @app.get("/health")
-def status():
-    return {"status": "ok"}
-
-AI_BRAIN_URL = os.getenv("AI_BRAIN_URL", "http://ai_brain:9004/ingest/habit")
-
-# optional centralized admin validation client (gateway) - lazy import
-gateway_validate_token = None
-
-
-def _require_admin(headers: dict = None) -> bool:
-    """If an X-Admin-Token header is present, validate it via gateway; otherwise permissive when no local ADMIN_TOKEN is set."""
-    token_required = os.getenv("ADMIN_TOKEN")
-    token = None
-    if headers:
-        token = headers.get('x-admin-token') or headers.get('X-Admin-Token')
-    if token_required:
-        if token == token_required:
-            return True
-        raise Exception("invalid admin token")
-    # no local token: permissive if no header; if header provided, attempt gateway validation
-    if not token:
-        return True
-    global gateway_validate_token
-    if gateway_validate_token is None:
-        try:
-            from microservice.gateway.admin_client import validate_token as _gval
-            gateway_validate_token = _gval
-        except Exception:
-            gateway_validate_token = None
-    if gateway_validate_token:
-        try:
-            return gateway_validate_token(token)
-        except Exception:
-            return False
-    return False
-
-# startup handled by lifespan
+def health():
+    return {"status": "ok", "message": "I'm watching your progress... or lack of it! 😈"}
 
 @app.get("/")
 def list_habits():
     with Session(engine) as session:
-        habits = session.query(Habit).all()
-        # Fetch all completions in a single query to avoid N+1 problem
-        all_completions = session.query(HabitCompletion).all()
-        
-        # Group completions by habit_id for efficient lookup
-        completions_by_habit = {}
-        for c in all_completions:
-            if c.habit_id not in completions_by_habit:
-                completions_by_habit[c.habit_id] = []
-            completions_by_habit[c.habit_id].append(c)
-        
+        habits = session.exec(select(Habit)).all()
         result = []
         for h in habits:
-            # Get completions from pre-fetched dict
-            completions = completions_by_habit.get(h.id, [])
-            # Convert to dict and add completions
-            habit_dict = {
-                "id": h.id,
-                "name": h.name,
-                "frequency": h.frequency,
-                "target_count": h.target_count,
-                "active": h.active,
-                "med_id": h.med_id,
-                "preferred_times": h.preferred_times,
-                "created_at": h.created_at,
-                "completions": [
-                    {
-                        "id": c.id,
-                        "habit_id": c.habit_id,
-                        "completion_date": c.completion_date,
-                        "count": c.count
-                    } for c in completions
-                ]
-            }
+            completions = session.exec(select(HabitCompletion).where(HabitCompletion.habit_id == h.id)).all()
+            habit_dict = h.dict()
+            habit_dict["completions"] = [c.dict() for c in completions]
             result.append(habit_dict)
-        return result
+        return {
+            "habits": result,
+            "gremlin_message": "Look at all these rules you made for yourself! 📜"
+        }
+
+@app.get("/today")
+def list_today_status():
+    """Autonomous status check for what is done/pending today with Gremlin flavor."""
+    status = get_today_habit_status(engine)
+    pending = [h for h in status if not h["is_done"]]
+    message = get_quip("habits_pending") if pending else get_quip("habits_done")
+    return {
+        "status": status,
+        "gremlin_message": message
+    }
 
 @app.post("/")
-def add_habit(h: Habit, background_tasks: BackgroundTasks = None):
+async def add_habit(h: Habit):
     with Session(engine) as session:
         session.add(h)
         session.commit()
         session.refresh(h)
-    # Send to ai_brain
-    if background_tasks:
-        background_tasks.add_task(_send_to_ai_brain, h)
-    else:
-        import asyncio
-        asyncio.create_task(_send_to_ai_brain(h))
-    return h
-
-
-@app.post("/med-adherence")
-def upsert_med_adherence(payload: dict, request: Request = None, background_tasks: BackgroundTasks = None):
-    """
-    Upsert a habit representing medication adherence, keyed by med_id.
-    Expected payload: { med_id, name, target_per_day, times: ["08:00", ...] }
-    """
-    med_id = payload.get("med_id")
-    if not med_id:
-        raise HTTPException(status_code=400, detail="med_id is required")
-
-    name = payload.get("name") or f"Medication {med_id}"
-    target = payload.get("target_per_day") or payload.get("frequency_per_day") or 1
-    times = payload.get("times") or []
-    times_str = ",".join(times) if isinstance(times, list) else str(times)
-
-    with Session(engine) as session:
-        existing = session.query(Habit).filter(Habit.med_id == med_id).first()
-        if existing:
-            existing.name = name
-            existing.target_count = target
-            existing.frequency = "daily"
-            existing.preferred_times = times_str
-            session.add(existing)
-            session.commit()
-            session.refresh(existing)
-            habit = existing
-        else:
-            habit = Habit(
-                name=name,
-                frequency="daily",
-                target_count=target,
-                med_id=med_id,
-                preferred_times=times_str,
-            )
-            session.add(habit)
-            session.commit()
-            session.refresh(habit)
-
-    if background_tasks:
-        background_tasks.add_task(_send_to_ai_brain, habit)
-    else:
-        import asyncio
-        asyncio.create_task(_send_to_ai_brain(habit))
-
-    return habit
-
-
-@app.post("/log")
-def log_med_adherence(payload: dict, background_tasks: BackgroundTasks = None):
-    """
-    Record a completion/skip event for a med-linked habit.
-    Payload: { habit_id?, med_id?, reminder_id?, status, timestamp }
-    """
-    habit_id = payload.get("habit_id")
-    med_id = payload.get("med_id")
-    status = payload.get("status", "completed")
-    reminder_id = payload.get("reminder_id")
-    ts = payload.get("timestamp") or datetime.datetime.utcnow().isoformat()
-
-    if not habit_id and not med_id:
-        raise HTTPException(status_code=400, detail="habit_id or med_id required")
-
-    with Session(engine) as session:
-        habit = None
-        if habit_id:
-            habit = session.get(Habit, habit_id)
-        if not habit and med_id:
-            habit = session.query(Habit).filter(Habit.med_id == med_id).first()
-        if not habit:
-            raise HTTPException(status_code=404, detail="Habit not found for logging")
-
-        completion = HabitCompletion(
-            habit_id=habit.id,
-            completion_date=ts,
-            count=1,
-            reminder_id=reminder_id,
-            status=status,
-            med_id=med_id or habit.med_id,
-        )
-        session.add(completion)
-        session.commit()
-        session.refresh(completion)
-
-    if background_tasks:
-        background_tasks.add_task(_send_completion_to_ai_brain, habit, completion)
-    else:
-        import asyncio
-        asyncio.create_task(_send_completion_to_ai_brain(habit, completion))
-
-    return completion
-
-@app.put("/{habit_id}")
-def update_habit(habit_id: int, h: Habit):
-    with Session(engine) as session:
-        db_habit = session.get(Habit, habit_id)
-        if not db_habit:
-            raise HTTPException(status_code=404, detail="Habit not found")
-        db_habit.name = h.name
-        db_habit.frequency = h.frequency
-        db_habit.target_count = h.target_count
-        db_habit.active = h.active
-        session.add(db_habit)
-        session.commit()
-        session.refresh(db_habit)
-        return db_habit
-
-@app.delete("/{habit_id}")
-def delete_habit(habit_id: int):
-    with Session(engine) as session:
-        habit = session.get(Habit, habit_id)
-        if not habit:
-            raise HTTPException(status_code=404, detail="Habit not found")
-        # Delete associated completions using bulk delete (more efficient)
-        session.query(HabitCompletion).filter(HabitCompletion.habit_id == habit_id).delete()
-        session.delete(habit)
-        session.commit()
-    return {"status": "deleted"}
+        
+        # KILO INTEGRATION
+        await kilo_nerve.send_observation(f"Habit created: {h.name} ({h.frequency})", priority="normal")
+        
+        return h
 
 @app.post("/complete/{habit_id}")
-def complete_habit(habit_id: int, background_tasks: BackgroundTasks = None):
+async def complete_habit(habit_id: int):
     today = datetime.datetime.utcnow().date().isoformat()
     with Session(engine) as session:
         habit = session.get(Habit, habit_id)
         if not habit:
-            raise HTTPException(status_code=404, detail="Habit not found")
-
-        # Check if already completed today
-        existing = session.query(HabitCompletion).filter(
-            HabitCompletion.habit_id == habit_id,
-            HabitCompletion.completion_date == today
+            raise HTTPException(status_code=404, detail="I lost that habit! It's gone! (Just kidding, it was never there). 😈")
+        
+        existing = session.exec(
+            select(HabitCompletion).where(
+                HabitCompletion.habit_id == habit_id,
+                HabitCompletion.completion_date == today
+            )
         ).first()
-
+        
         if existing:
             existing.count += 1
+            session.add(existing)
             session.commit()
             session.refresh(existing)
-            completion = existing
+            result = existing
         else:
-            completion = HabitCompletion(
-                habit_id=habit_id,
-                completion_date=today,
-                count=1
-            )
-            session.add(completion)
+            result = HabitCompletion(habit_id=habit_id, completion_date=today, count=1)
+            session.add(result)
             session.commit()
-            session.refresh(completion)
-
-    # Send to ai_brain
-    if background_tasks:
-        background_tasks.add_task(_send_completion_to_ai_brain, habit, completion)
-    else:
-        import asyncio
-        asyncio.create_task(_send_completion_to_ai_brain(habit, completion))
-    return completion
-
-@app.post("/record-reminder-action")
-def record_reminder_action(payload: dict, background_tasks: BackgroundTasks = None):
-    """
-    Record a reminder action (completed/skipped/snoozed) from the reminder service.
-    This is critical for ML/AI learning and habit tracking.
-    
-    Expected payload: {
-        "reminder_id": int,
-        "notification_id": int,
-        "action": "completed" | "skipped" | "snoozed",
-        "timestamp": ISO datetime,
-        "notes": optional string,
-        "reminder_text": string
-    }
-    """
-    try:
-        action = payload.get("action", "completed")
-        reminder_text = payload.get("reminder_text", "")
-        timestamp = payload.get("timestamp")
-        notes = payload.get("notes", "")
+            session.refresh(result)
         
-        # Try to find associated habit (by reminder text or med_id if available)
-        with Session(engine) as session:
-            # First try exact name match
-            habit = session.query(Habit).filter(
-                Habit.name.contains(reminder_text) | 
-                Habit.name == reminder_text
-            ).first()
+        return {
+            "completion": result,
+            "gremlin_message": f"Did you really do {habit.name}? I'll take your word for it... for now. 😈"
+        }
+
+@app.delete("/{habit_id}")
+async def delete_habit(habit_id: int):
+    """Delete a habit and its history. Poof! 🪄"""
+    with Session(engine) as session:
+        habit = session.get(Habit, habit_id)
+        if not habit:
+            raise HTTPException(status_code=404, detail="That habit doesn't exist! Are you seeing things? 👻")
+        
+        # Delete completions first
+        completions = session.exec(select(HabitCompletion).where(HabitCompletion.habit_id == habit_id)).all()
+        for c in completions:
+            session.delete(c)
             
-            # If found, record completion
-            if habit and action in ["completed", "skipped"]:
-                today = datetime.datetime.utcnow().date().isoformat()
-                
-                completion = HabitCompletion(
-                    habit_id=habit.id,
-                    completion_date=today,
-                    count=1 if action == "completed" else 0,
-                    reminder_id=payload.get("reminder_id"),
-                    status=action,
-                    med_id=habit.med_id
-                )
-                session.add(completion)
-                session.commit()
-                
-                # Send to AI brain for learning
-                if background_tasks:
-                    background_tasks.add_task(_send_completion_to_ai_brain, habit, completion)
-                
-                return {
-                    "status": "recorded",
-                    "habit_id": habit.id,
-                    "action": action,
-                    "ml_sent": True
-                }
-            else:
-                # No habit found - still log for AI to learn patterns
-                print(f"No habit found for reminder: {reminder_text}, action: {action}")
-                
-                # TODO: Send to AI brain even without habit association
-                # This helps AI learn about reminders that don't have habits yet
-                
-                return {
-                    "status": "no_habit_found",
-                    "action": action,
-                    "reminder_text": reminder_text,
-                    "ml_sent": False
-                }
-                
-    except Exception as e:
-        print(f"Error recording reminder action: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-async def _send_to_ai_brain(h: Habit):
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post(AI_BRAIN_URL, json={
-                "name": h.name,
-                "frequency": h.frequency
-            }, timeout=5)
-        except Exception as e:
-            print(f"[AI_BRAIN] Failed to send habit: {e}")
-
-async def _send_completion_to_ai_brain(h: Habit, c: HabitCompletion):
-    async with httpx.AsyncClient() as client:
-        try:
-            await client.post("http://ai_brain:9004/ingest/habit_completion", json={
-                "habit": h.name,
-                "completion_date": c.completion_date,
-                "count": c.count,
-                "frequency": h.frequency
-            }, timeout=5)
-        except Exception as e:
-            print(f"[AI_BRAIN] Failed to send habit completion: {e}")
+        session.delete(habit)
+        session.commit()
+        return {"message": f"I've vaporized the '{habit.name}' habit and all its evidence! 💨"}
