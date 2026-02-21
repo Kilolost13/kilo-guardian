@@ -102,14 +102,18 @@ export interface SystemStatus {
 }
 
 export interface CoachingInsight {
-  id: string;
-  type: 'habit' | 'goal' | 'memory' | 'general' | 'celebration' | 'warning' | 'suggestion' | 'motivation' | 'reminder';
-  title: string;
-  description: string;
-  message?: string; // For backward compatibility
-  priority: 'low' | 'medium' | 'high';
-  actionable: boolean;
-  createdAt: string;
+  id?: string;
+  type?: 'habit' | 'goal' | 'memory' | 'general' | 'celebration' | 'warning' | 'suggestion' | 'motivation' | 'reminder' | 'medication_reminder' | 'financial' | 'health' | string;
+  title?: string;
+  description?: string;
+  content?: string;    // Actual insight text from AI Brain
+  message?: string;    // For backward compatibility
+  observation?: string;
+  observation_type?: string;
+  priority?: 'low' | 'medium' | 'high';
+  actionable?: boolean;
+  createdAt?: string;
+  timestamp?: string;
 }
 
 export interface DashboardStats {

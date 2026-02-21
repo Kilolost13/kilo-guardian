@@ -2,7 +2,7 @@ import api from './api';
 
 export const chatService = {
   sendMessage: async (message: string): Promise<string> => {
-    const response = await api.post('/ai_brain/chat', {
+    const response = await api.post('/ai_brain/chat/llm', {
       message,
       user: 'kyle'
     });

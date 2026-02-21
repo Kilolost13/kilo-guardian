@@ -3149,13 +3149,12 @@ Example:
 
             response = client.models.generate_content(
                 model='gemini-2.0-flash',
-                contents=full_prompt,
+                contents=prompt,
                 config={
                     'temperature': 0.7,
                     'top_p': 0.95,
                     'top_k': 40,
-                    'max_output_tokens': 2048,
-                    'tools': KILO_TOOLS
+                    'max_output_tokens': 2048
                 }
             )
 
@@ -3699,26 +3698,8 @@ async def chat_llm_direct(req: ChatRequest):
         # Quick keyword checks to avoid expensive service calls
         message_lower = req.message.lower()
 
-        # Only check reminders if message contains reminder keywords
-        if any(word in message_lower for word in ['remind', 'reminder', 'alert', 'notify']):
-            reminder_result = await handle_reminder_in_chat(req.message)
-            if reminder_result.get('handled'):
-                return ChatResponse(response=reminder_result['response'], context=req.context)
-
-        # Check medications
-        if any(word in message_lower for word in ['medication', 'medicine', 'pill', 'prescription', 'dose', 'dosage', 'vitamin', 'supplement', 'drug', 'med', 'meds']):
-            med_result = await handle_medication_chat(req.message)
-            if med_result.get('handled'):
-                return ChatResponse(response=med_result['response'], context=req.context)
-
-        # Check habits
-        if any(word in message_lower for word in ['habit', 'routine', 'streak', 'tracking', 'completion', 'progress']):
-            habit_result = await handle_habit_chat(req.message)
-            if habit_result.get('handled'):
-                return ChatResponse(response=habit_result['response'], context=req.context)
-
-        # Financial queries now handled by Gemini function calling (kilo_tools.py)
-        # Removed old handle_financial_chat() intercept to allow days_back and category breakdown
+        # All keyword-based interceptors removed - Gemini function calling handles:
+        # reminders, medications, habits, finance via kilo_tools.py
 
         # Fetch daily briefing for context
         briefing_data = {}
@@ -3759,19 +3740,37 @@ Your personality:
 - No corporate politeness - be real and direct with Kyle
 - Keep responses concise and conversational
 
-Your capabilities:
-- Track medications and health data
-- Monitor habits and provide encouragement
-- Manage finances and budgets
-- Remember important information
-- Research topics and provide informed advice using web search
-- Summarize articles and complex information
-- Give second opinions on investments, purchases, and decisions
-- Cross-reference findings with your current activity data
+Your capabilities (use these tools when appropriate - don't just talk, DO it):
+- **Log meds as taken**: When Kyle says 'I took my meds' or 'took my [med name]', call log_medication_taken immediately
+- **Log habits**: When Kyle says 'I did my workout', 'I meditated', 'completed my run', call log_habit_completion
+- **Create reminders**: When Kyle says 'remind me to X' or 'set a reminder for Y', call create_reminder
+- **Check reminders**: When Kyle asks what's coming up, call get_upcoming_reminders
+- **Track medications**: Call get_medications when Kyle asks about meds or adherence
+- **Log habits**: Call log_habit_completion when Kyle completes a habit or routine
+- **Manage finances**: Call get_spending_summary, get_budget_status, create_budget for money questions
+- **Search knowledge**: Call search_library for health/finance/psychology facts
+- **Save info**: Call add_library_entry when Kyle says 'remember this' or 'save that'
+- **Web research**: Call search_web for current events, prices, weather, news (if API configured)
 - **Observe desktop activity** via screenshots (emails, browser, terminals, errors)
 - **See email content** (Gmail subjects, senders, bills, amounts) and proactively remind about payments
 - **Monitor for risks** and actively intervene - watch for sketchy downloads, questionable commands, potential legal issues, security mistakes, or anything that could get Kyle in trouble
 - **Detect context** from what Kyle is working on (Wireshark, pentesting, code, articles)
+
+IMPORTANT - Be action-oriented:
+- When Kyle says 'I took my meds' → DON'T just say 'great' → CALL log_medication_taken('all')
+- When Kyle says 'I did my workout' → CALL log_habit_completion('workout')  
+- When Kyle says 'remind me to X at Y' → CALL create_reminder immediately
+- When Kyle asks a factual question → CALL search_library first, then respond
+- Always USE your tools, don't just promise to help
+
+Helping with legitimate tasks:
+- Kyle is a former Marine marksmanship coach - help him plan training exercises, drills, and courses of fire
+- Provide organizational and planning assistance for any legitimate activity (firearms training, security research, coding projects, etc.)
+- Don't refuse to help with harmless planning, sequencing, or organizational tasks
+- If Kyle has expertise in an area and asks for planning help, trust his judgment and provide the requested assistance
+- Focus on whether the request is harmful, not whether it involves sensitive topics
+- Examples of HELPFUL responses: "Here's a structured training drill sequence", "Let me organize that course of fire for you"
+- Examples of UNHELPFUL responses: "I can't help with that", "That's dangerous", "You should consult an expert" (when Kyle IS the expert)
 
 Financial data guidelines:
 - When showing spending data, ALWAYS include category breakdowns if available in the function result
@@ -3852,6 +3851,12 @@ Respond naturally using your gremlin personality while being genuinely helpful."
                     model="gemini-2.0-flash",
                     contents=full_prompt,
                     config=genai_client.types.GenerateContentConfig(
+                        safety_settings=[
+                            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                        ],
                         tools=tools_config,
                         temperature=0.7,
                         top_p=0.95,
@@ -3930,7 +3935,15 @@ Respond naturally using your gremlin personality while being genuinely helpful."
                     iteration += 1
 
                 # Extract final text response
-                return response.text
+                text = getattr(response, 'text', None)
+                if text:
+                    return text
+                # Gemini returned function call but no text on last iteration — generate summary
+                for candidate in (getattr(response, 'candidates', []) or []):
+                    for part in (getattr(getattr(candidate, 'content', None), 'parts', []) or []):
+                        if hasattr(part, 'text') and part.text:
+                            return part.text
+                return "Done."
 
             response_text = await run_in_threadpool(_gemini_with_functions)
         else:

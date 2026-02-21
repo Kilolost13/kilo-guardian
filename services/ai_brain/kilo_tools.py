@@ -6,6 +6,7 @@ All microservice integrations for the AI Brain
 from typing import Dict, Any, List
 import httpx
 import logging
+from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -16,14 +17,18 @@ logger = logging.getLogger(__name__)
 KILO_FUNCTION_DECLARATIONS = [
     {
         "name": "get_spending_summary",
-        "description": "Get Kyle's spending data for the current month. Returns total spent, breakdown by category, and transaction count. Use this when Kyle asks about spending, budgets, or money.",
+        "description": "Get Kyle's spending data. Returns total spent, breakdown by category, and transaction count. Use this when Kyle asks about spending, budgets, or money. By default shows current month only.",
         "parameters": {
             "type": "object",
             "properties": {
                 "category": {
                     "type": "string",
-                    "description": "Optional: filter by specific category (streaming, food, utilities, entertainment, shopping, subscriptions, bills, transportation, health, other)",
-                    "enum": ["streaming", "food", "utilities", "entertainment", "shopping", "subscriptions", "bills", "transportation", "health", "other"]
+                    "description": "Optional: filter by specific category"
+                },
+                "days_back": {
+                    "type": "number",
+                    "description": "Number of days to look back (e.g., 15 for last 15 days, 30 for last month). Defaults to current month only.",
+                    "default": 0
                 }
             }
         }
@@ -47,7 +52,7 @@ KILO_FUNCTION_DECLARATIONS = [
                     "description": "Budget category name",
                     "enum": ["streaming", "food", "utilities", "entertainment", "shopping", "subscriptions", "bills", "transportation", "health", "other"]
                 },
-                "amount": {  # Note: sent as monthly_limit to backend
+                "amount": {
                     "type": "number",
                     "description": "Monthly budget limit in dollars (e.g., 100.00)"
                 },
@@ -71,13 +76,13 @@ KILO_FUNCTION_DECLARATIONS = [
     },
     {
         "name": "log_medication_taken",
-        "description": "Record that Kyle took a medication dose. Use when Kyle says he took his meds or a specific medication.",
+        "description": "Record that Kyle took a medication dose. Use when Kyle says he took his meds or a specific medication. If no specific med is named but Kyle says 'I took my meds', log all of them.",
         "parameters": {
             "type": "object",
             "properties": {
                 "medication_name": {
                     "type": "string",
-                    "description": "Name of the medication taken (must match existing medication)"
+                    "description": "Name of the medication taken (must match existing medication). Use 'all' to log all current medications."
                 }
             },
             "required": ["medication_name"]
@@ -89,6 +94,20 @@ KILO_FUNCTION_DECLARATIONS = [
         "parameters": {
             "type": "object",
             "properties": {}
+        }
+    },
+    {
+        "name": "log_habit_completion",
+        "description": "Mark a habit as completed for today. Use when Kyle says he completed a habit, finished a workout, meditated, etc.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "habit_name": {
+                    "type": "string",
+                    "description": "Name of the habit to mark complete (e.g., 'morning workout', 'meditation', 'reading')"
+                }
+            },
+            "required": ["habit_name"]
         }
     },
     {
@@ -106,6 +125,29 @@ KILO_FUNCTION_DECLARATIONS = [
         }
     },
     {
+        "name": "create_reminder",
+        "description": "Create a new reminder for Kyle. Use when Kyle asks you to remind him about something. For daily recurring reminders use recurrence='daily' and a time like '15:00'.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "What to remind Kyle about (e.g., 'Take afternoon meds', 'Pay electric bill')"
+                },
+                "when": {
+                    "type": "string",
+                    "description": "When to remind. RULES: (1) For one-time reminders use full ISO datetime including date: '2026-02-22T10:00:00'. NEVER use time-only for one-time. (2) For daily recurring: time-only like '15:00'. Today is 2026-02-21, so 'tomorrow at 10am' = '2026-02-22T10:00:00'."
+                },
+                "recurrence": {
+                    "type": "string",
+                    "description": "Set to 'daily' for daily reminders, 'weekly' for weekly, or omit for one-time",
+                    "enum": ["daily", "weekly", "none"]
+                }
+            },
+            "required": ["text", "when"]
+        }
+    },
+    {
         "name": "search_library",
         "description": "Search the Library of Truth for verified facts about medical advice, health guidelines, financial wisdom, cooking safety, and psychology principles. Use when Kyle asks factual questions.",
         "parameters": {
@@ -118,8 +160,30 @@ KILO_FUNCTION_DECLARATIONS = [
             },
             "required": ["query"]
         }
-    }
-,
+    },
+    {
+        "name": "add_library_entry",
+        "description": "Save important information, facts, or advice to the Library of Truth for future reference. Use when Kyle says 'remember this', 'save this', or when you discover a useful fact worth keeping.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "title": {
+                    "type": "string",
+                    "description": "Short title for the entry (e.g., 'Buspirone Food Interaction')"
+                },
+                "content": {
+                    "type": "string",
+                    "description": "The information to save"
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Category for the entry",
+                    "enum": ["medical", "health", "finance", "psychology", "cooking", "security", "training", "general"]
+                }
+            },
+            "required": ["title", "content", "category"]
+        }
+    },
     {
         "name": "search_web",
         "description": "Search the internet for current information, news, weather, prices, or facts not in the Library of Truth. Use when Kyle asks about current events, real-time data, or external information.",
@@ -167,11 +231,20 @@ async def execute_tool_call(tool_name: str, parameters: Dict[str, Any]) -> Dict[
         elif tool_name == "get_habits":
             return await _get_habits()
 
+        elif tool_name == "log_habit_completion":
+            return await _log_habit_completion(parameters)
+
         elif tool_name == "get_upcoming_reminders":
             return await _get_upcoming_reminders(parameters)
 
+        elif tool_name == "create_reminder":
+            return await _create_reminder(parameters)
+
         elif tool_name == "search_library":
             return await _search_library(parameters)
+
+        elif tool_name == "add_library_entry":
+            return await _add_library_entry(parameters)
 
         elif tool_name == "search_web":
             return await _search_web(parameters)
@@ -188,12 +261,32 @@ async def execute_tool_call(tool_name: str, parameters: Dict[str, Any]) -> Dict[
 # INDIVIDUAL TOOL IMPLEMENTATIONS
 # ═══════════════════════════════════════════════════════════════════════════
 
+def parse_transaction_date(date_str: str) -> datetime:
+    """Parse transaction date in multiple formats"""
+    if not date_str:
+        return datetime(1970, 1, 1)
+
+    # Try YYYY-MM-DD format first (current format)
+    try:
+        return datetime.strptime(date_str, "%Y-%m-%d")
+    except ValueError:
+        pass
+
+    # Try MM/DD/YYYY format
+    try:
+        return datetime.strptime(date_str, "%m/%d/%Y")
+    except ValueError:
+        pass
+
+    # Default fallback
+    return datetime(1970, 1, 1)
+
+
 async def _get_spending_summary(params: Dict[str, Any]) -> Dict[str, Any]:
     """Get spending data from financial microservice"""
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            # Get all transactions
-            resp = await client.get("http://kilo-financial:9005/transactions")
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get("http://kilo-financial:9005/transactions?limit=2000")
 
             if resp.status_code != 200:
                 return {"error": "Could not fetch transaction data", "status_code": resp.status_code}
@@ -209,17 +302,37 @@ async def _get_spending_summary(params: Dict[str, Any]) -> Dict[str, Any]:
                     "message": "No transactions found"
                 }
 
+            # Filter by date
+            days_back = params.get("days_back", 0)
+            if days_back > 0:
+                cutoff = datetime.now() - timedelta(days=days_back)
+                transactions = [
+                    t for t in transactions
+                    if parse_transaction_date(t.get("date", "")) >= cutoff
+                ]
+            else:
+                # Default: current month only
+                current_month = datetime.now().month
+                current_year = datetime.now().year
+                transactions = [
+                    t for t in transactions
+                    if parse_transaction_date(t.get("date", "")).month == current_month
+                    and parse_transaction_date(t.get("date", "")).year == current_year
+                ]
+
             # Calculate totals
             total_spent = 0
             category_totals = {}
 
             for txn in transactions:
+                txn_type = txn.get("transaction_type", "expense")
+                if txn_type != "expense":
+                    continue
+
                 amount = txn.get("amount", 0)
-                if amount < 0:  # Expenses are negative
-                    spent = abs(amount)
-                    total_spent += spent
-                    category = txn.get("category", "uncategorized")
-                    category_totals[category] = category_totals.get(category, 0) + spent
+                total_spent += amount
+                category = txn.get("category", "uncategorized")
+                category_totals[category] = category_totals.get(category, 0) + amount
 
             # Filter by category if requested
             requested_category = params.get("category")
@@ -267,7 +380,6 @@ async def _create_budget(params: Dict[str, Any]) -> Dict[str, Any]:
     try:
         category = params.get("category")
         amount = params.get("amount")
-        period = params.get("period", "monthly")
 
         if not category or not amount:
             return {"error": "Missing required parameters: category and amount"}
@@ -299,12 +411,13 @@ async def _get_medications() -> Dict[str, Any]:
     """Get medications from meds microservice"""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get("http://kilo-meds:9000/meds/")
+            resp = await client.get("http://kilo-meds:9000/")
 
             if resp.status_code != 200:
                 return {"medications": [], "message": "No medications tracked yet"}
 
-            meds = resp.json()
+            data = resp.json()
+            meds = data.get("meds", data) if isinstance(data, dict) else data
             if not meds:
                 return {"medications": [], "message": "No medications in system"}
 
@@ -318,31 +431,43 @@ async def _get_medications() -> Dict[str, Any]:
 async def _log_medication_taken(params: Dict[str, Any]) -> Dict[str, Any]:
     """Log medication dose in meds microservice"""
     try:
-        med_name = params.get("medication_name")
+        med_name = params.get("medication_name", "")
         if not med_name:
             return {"error": "Missing medication_name parameter"}
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            # First, get all meds to find the ID
-            meds_resp = await client.get("http://kilo-meds:9000/meds/")
+            # Get all meds
+            meds_resp = await client.get("http://kilo-meds:9000/")
             if meds_resp.status_code != 200:
                 return {"error": "Could not fetch medications list"}
 
-            meds = meds_resp.json()
-            # Find medication by name (case-insensitive)
-            med = next((m for m in meds if m.get("name", "").lower() == med_name.lower()), None)
+            meds_data = meds_resp.json()
+            meds = meds_data.get("meds", meds_data) if isinstance(meds_data, dict) else meds_data
+
+            # "all" = log everything
+            if med_name.lower() == "all":
+                results = []
+                for med in meds:
+                    log_resp = await client.post(f"http://kilo-meds:9000/take/{med['id']}")
+                    results.append({
+                        "medication": med.get("name"),
+                        "success": log_resp.status_code in [200, 201]
+                    })
+                return {"success": True, "logged": results, "message": f"Logged all {len(results)} medications"}
+
+            # Find by name (case-insensitive, partial match)
+            med = next((m for m in meds if med_name.lower() in m.get("name", "").lower()), None)
 
             if not med:
                 return {"error": f"Medication '{med_name}' not found. Available: {', '.join([m.get('name', '') for m in meds])}"}
 
-            # Log the dose
-            log_resp = await client.post(f"http://kilo-meds:9000/meds/{med['id']}/take")
+            log_resp = await client.post(f"http://kilo-meds:9000/take/{med['id']}")
 
             if log_resp.status_code in [200, 201]:
                 return {
                     "success": True,
-                    "medication": med_name,
-                    "message": f"Logged dose of {med_name}"
+                    "medication": med.get("name"),
+                    "message": f"Logged dose of {med.get('name')}"
                 }
             else:
                 return {"error": f"Failed to log medication (HTTP {log_resp.status_code})"}
@@ -356,12 +481,13 @@ async def _get_habits() -> Dict[str, Any]:
     """Get habits from habits microservice"""
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get("http://kilo-habits:9000/habits/")
+            resp = await client.get("http://kilo-habits:9000/")
 
             if resp.status_code != 200:
                 return {"habits": [], "message": "No habits tracked yet"}
 
-            habits = resp.json()
+            data = resp.json()
+            habits = data.get("habits", data) if isinstance(data, dict) else data
             if not habits:
                 return {"habits": [], "message": "No habits in system"}
 
@@ -372,13 +498,57 @@ async def _get_habits() -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+async def _log_habit_completion(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Mark a habit as completed today"""
+    try:
+        habit_name = params.get("habit_name", "")
+        if not habit_name:
+            return {"error": "Missing habit_name parameter"}
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            # Get all habits to find the ID
+            habits_resp = await client.get("http://kilo-habits:9000/")
+            if habits_resp.status_code != 200:
+                return {"error": "Could not fetch habits list"}
+
+            data = habits_resp.json()
+            habits = data.get("habits", data) if isinstance(data, dict) else data
+
+            # Find by name (case-insensitive, partial match)
+            habit = next(
+                (h for h in habits if habit_name.lower() in h.get("name", "").lower()),
+                None
+            )
+
+            if not habit:
+                available = ", ".join([h.get("name", "") for h in habits])
+                return {"error": f"Habit '{habit_name}' not found. Available: {available}"}
+
+            # Mark complete
+            complete_resp = await client.post(f"http://kilo-habits:9000/complete/{habit['id']}")
+
+            if complete_resp.status_code in [200, 201]:
+                return {
+                    "success": True,
+                    "habit": habit.get("name"),
+                    "message": f"Marked '{habit.get('name')}' as done for today"
+                }
+            else:
+                body = complete_resp.text
+                return {"error": f"Failed to log habit (HTTP {complete_resp.status_code}): {body}"}
+
+    except Exception as e:
+        logger.error(f"log_habit_completion error: {e}")
+        return {"error": str(e)}
+
+
 async def _get_upcoming_reminders(params: Dict[str, Any]) -> Dict[str, Any]:
     """Get reminders from reminder microservice"""
     try:
         limit = params.get("limit", 10)
 
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(f"http://kilo-reminder:9002/reminder/notifications/pending?limit={limit}")
+            resp = await client.get(f"http://kilo-reminder:9002/notifications/pending?limit={limit}")
 
             if resp.status_code != 200:
                 return {"reminders": [], "message": "No pending reminders"}
@@ -393,6 +563,49 @@ async def _get_upcoming_reminders(params: Dict[str, Any]) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"get_upcoming_reminders error: {e}")
+        return {"error": str(e)}
+
+
+async def _create_reminder(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Create a new reminder in the reminder microservice"""
+    try:
+        text = params.get("text", "")
+        when = params.get("when", "")
+        recurrence = params.get("recurrence", "none")
+
+        if not text or not when:
+            return {"error": "Missing required fields: text and when"}
+
+        # Clean up recurrence
+        if recurrence == "none" or not recurrence:
+            recurrence = None
+
+        payload = {
+            "text": text,
+            "when": when,
+            "timezone": "America/Chicago"
+        }
+        if recurrence:
+            payload["recurrence"] = recurrence
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post("http://kilo-reminder:9002/", json=payload)
+
+            if resp.status_code in [200, 201]:
+                data = resp.json()
+                return {
+                    "success": True,
+                    "reminder_id": data.get("id"),
+                    "text": text,
+                    "when": when,
+                    "recurrence": recurrence,
+                    "message": f"Created reminder: '{text}' at {when}"
+                }
+            else:
+                return {"error": f"Failed to create reminder (HTTP {resp.status_code}): {resp.text}"}
+
+    except Exception as e:
+        logger.error(f"create_reminder error: {e}")
         return {"error": str(e)}
 
 
@@ -419,6 +632,39 @@ async def _search_library(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": str(e)}
 
 
+async def _add_library_entry(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Add an entry to the Library of Truth"""
+    try:
+        title = params.get("title", "")
+        content = params.get("content", "")
+        category = params.get("category", "general")
+
+        if not title or not content:
+            return {"error": "Missing required fields: title and content"}
+
+        payload = {
+            "title": title,
+            "content": content,
+            "category": category,
+            "source": "Kilo AI"
+        }
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post("http://kilo-library:9006/", json=payload)
+
+            if resp.status_code in [200, 201]:
+                return {
+                    "success": True,
+                    "message": f"Saved '{title}' to Library of Truth under {category}"
+                }
+            else:
+                return {"error": f"Failed to save entry (HTTP {resp.status_code}): {resp.text}"}
+
+    except Exception as e:
+        logger.error(f"add_library_entry error: {e}")
+        return {"error": str(e)}
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # WEB SEARCH FUNCTION
 # ═══════════════════════════════════════════════════════════════════════════
@@ -427,23 +673,25 @@ async def _search_web(params: Dict[str, Any]) -> Dict[str, Any]:
     """Search the internet using Brave Search API"""
     try:
         import os
-        
+
         query = params.get("query", "")
         if not query:
             return {"error": "Missing query parameter"}
-        
+
         api_key = os.environ.get("BRAVE_API_KEY", "")
         if not api_key:
-            return {"error": "BRAVE_API_KEY not configured. Set environment variable."}
-        
+            return {
+                "error": "Web search not configured (BRAVE_API_KEY missing). I can check the Library of Truth instead, or tell me what you need and I'll do my best from what I know."
+            }
+
         logger.info(f"🌐 Searching web for: {query}")
-        
+
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(
                 "https://api.search.brave.com/res/v1/web/search",
                 params={
                     "q": query,
-                    "count": 5,  # Top 5 results
+                    "count": 5,
                     "search_lang": "en",
                     "country": "us"
                 },
@@ -452,20 +700,19 @@ async def _search_web(params: Dict[str, Any]) -> Dict[str, Any]:
                     "X-Subscription-Token": api_key
                 }
             )
-            
+
             if resp.status_code == 401:
                 return {"error": "Invalid BRAVE_API_KEY. Check your API key."}
             elif resp.status_code == 429:
                 return {"error": "Rate limit exceeded. You've used your monthly quota."}
             elif resp.status_code != 200:
                 return {"error": f"Search failed with status {resp.status_code}"}
-            
+
             data = resp.json()
-            
-            # Extract useful results
+
             results = []
             web_results = data.get("web", {}).get("results", [])
-            
+
             for result in web_results[:5]:
                 results.append({
                     "title": result.get("title", ""),
@@ -473,22 +720,22 @@ async def _search_web(params: Dict[str, Any]) -> Dict[str, Any]:
                     "description": result.get("description", ""),
                     "age": result.get("age", "")
                 })
-            
+
             if not results:
                 return {
                     "results": [],
                     "message": f"No results found for '{query}'",
                     "query": query
                 }
-            
+
             logger.info(f"✅ Found {len(results)} results for: {query}")
-            
+
             return {
                 "results": results,
                 "query": query,
                 "count": len(results)
             }
-            
+
     except Exception as e:
         logger.error(f"search_web error: {e}", exc_info=True)
         return {"error": str(e)}

@@ -225,11 +225,50 @@ SERVICE_URLS = {
     "ml": os.getenv("ML_ENGINE_URL", "http://docker_ml_engine_1:9008"),
     "voice": os.getenv("VOICE_URL", "http://docker_voice_1:9009"),
     "usb": os.getenv("USB_TRANSFER_URL", "http://docker_usb_transfer_1:8006"),
+    "security_monitor": os.getenv("SECURITY_MONITOR_URL", "http://security-monitor:8001"),
+    "drone_control": os.getenv("DRONE_CONTROL_URL", "http://drone-control:8002"),
+    "briefing": os.getenv("BRIEFING_URL", "http://briefing:8003"),
 }
 
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.post("/api/agent/notify")
+async def agent_notify(payload: dict):
+    """
+    Receive notifications from services (reminders, alerts, etc.)
+    and forward to Socket.IO for real-time delivery to frontend
+    """
+    try:
+        notification_type = payload.get("type", "generic")
+        content = payload.get("content", "")
+        metadata = payload.get("metadata", {})
+
+        # Forward to Socket.IO service for real-time push to frontend
+        socketio_url = os.getenv("SOCKETIO_URL", "http://kilo-socketio:9010")
+
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            await client.post(
+                f"{socketio_url}/emit",
+                json={
+                    "event": "notification",
+                    "data": {
+                        "type": notification_type,
+                        "content": content,
+                        "metadata": metadata,
+                        "timestamp": datetime.datetime.now().isoformat()
+                    }
+                }
+            )
+
+        logger.info(f"Notification forwarded: {notification_type} - {content}")
+        return {"status": "ok", "message": "Notification sent"}
+
+    except Exception as e:
+        logger.error(f"Failed to forward notification: {e}")
+        return {"status": "error", "message": str(e)}
 
 
 @app.get('/admin/ai_brain/metrics')

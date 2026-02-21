@@ -1,35 +1,41 @@
-import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import Dashboard from './pages/Dashboard';
-import EnhancedTabletDashboard from './pages/EnhancedTabletDashboard';
-import Medications from './pages/Medications';
-import Reminders from './pages/Reminders';
-import Finance from './pages/Finance';
-import Habits from './pages/Habits';
-import Admin from './pages/Admin';
-import { NotificationCenter } from './components/NotificationCenter';
-import './App.css';
+import React from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import ChatPage from "./pages/ChatPage";
+import Dashboard from "./pages/Dashboard";
+import Admin from "./pages/Admin";
+import UserDashboard from "./pages/UserDashboard";
+import AdminDashboard from "./pages/AdminDashboard";
+import Nav from "./components/Nav";
+import "./App.css";
 
 function App() {
   return (
-    <Router>
-      <NotificationCenter />
-      <Routes>
-        {/* Default route redirects to dashboard */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+    <Router basename="/guardian">
+      <div className="scanline" />
 
-        {/* Main application routes */}
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/tablet" element={<EnhancedTabletDashboard />} />
-        <Route path="/medications" element={<Medications />} />
-        <Route path="/reminders" element={<Reminders />} />
-        <Route path="/finance" element={<Finance />} />
-        <Route path="/habits" element={<Habits />} />
-        <Route path="/admin" element={<Admin />} />
+      <div className="flex flex-col h-screen w-full bg-dark-bg grid-bg">
+        <Nav />
 
-        {/* Catch-all route for 404s - redirect to dashboard */}
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-      </Routes>
+        <div className="flex-1 overflow-y-auto">
+          <Routes>
+            {/* Home goes to Dashboard (chat interface) */}
+            <Route path="/"            element={<Navigate to="/dashboard" replace />} />
+            <Route path="/dashboard"   element={<Dashboard />} />
+            <Route path="/chat"        element={<ChatPage />} />
+
+            {/* Eyes tab - UserDashboard with all data */}
+            <Route path="/eyes"        element={<UserDashboard />} />
+            <Route path="/user"        element={<UserDashboard />} />
+
+            {/* Admin */}
+            <Route path="/admin-panel" element={<AdminDashboard />} />
+            <Route path="/admin"       element={<Admin />} />
+
+            {/* Fallback */}
+            <Route path="*"            element={<Navigate to="/dashboard" replace />} />
+          </Routes>
+        </div>
+      </div>
     </Router>
   );
 }
