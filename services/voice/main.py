@@ -1,133 +1,194 @@
 """
-Voice Microservice for Kilo AI
+Kilo Voice Service — TTS + STT
 
-Handles Speech-to-Text (STT) and Text-to-Speech (TTS) functionality.
-
-Currently supports:
-- Local Whisper for STT (when available)
-- Local Piper for TTS (when available)
-- Placeholder endpoints for future implementation
-
-This is a skeleton implementation - expand as needed!
+TTS: edge-tts (Microsoft neural voices, free, no API key)
+STT: Gemini Flash (if GEMINI_API_KEY set) or placeholder
 """
-
-import sys
+import asyncio
+import io
 import os
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from kilo_integration import KiloNerve
+import logging
+import base64
+import httpx
+from contextlib import asynccontextmanager
+from typing import Optional
+
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
-import os
-from typing import Optional
-import io
 
-kilo_nerve = KiloNerve("voice")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Kilo Voice Service")
+# ── Config ────────────────────────────────────────────────────────────────────
 
-# Configuration
-ALLOW_NETWORK = os.getenv("ALLOW_NETWORK", "false").lower() == "true"
-STT_PROVIDER = os.getenv("STT_PROVIDER", "whisper")  # "whisper" or "none"
-TTS_PROVIDER = os.getenv("TTS_PROVIDER", "piper")    # "piper" or "none"
+# Default voice — Christopher is a clear, natural-sounding US male voice
+DEFAULT_VOICE  = os.environ.get("KILO_VOICE", "en-US-ChristopherNeural")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+AI_BRAIN_URL   = os.environ.get("AI_BRAIN_URL", "http://kilo-ai-brain:9004")
 
-# Models
-class TextToSpeechRequest(BaseModel):
+# Voice options Kilo supports (name → edge-tts voice ID)
+VOICES = {
+    "kilo":        "en-US-GuyNeural",            # Kilo default voice
+    "kilo-deep":   "en-US-GuyNeural",            # deeper male
+    "kilo-warm":   "en-US-EricNeural",           # warmer male
+    "aria":        "en-US-AriaNeural",            # professional female
+    "jenny":       "en-US-JennyNeural",           # conversational female
+    "default":     "en-US-GuyNeural",
+}
+
+# ── Lifespan ──────────────────────────────────────────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    try:
+        import edge_tts
+        logger.info("edge-tts available — TTS ready")
+    except ImportError:
+        logger.warning("edge-tts not installed — TTS will fail")
+    yield
+
+# ── App ───────────────────────────────────────────────────────────────────────
+
+app = FastAPI(title="Kilo Voice Service", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Schemas ───────────────────────────────────────────────────────────────────
+
+class TTSRequest(BaseModel):
     text: str
-    voice: Optional[str] = "default"  # Future: support multiple voices
-    speed: Optional[float] = 1.0
+    voice: Optional[str] = "kilo"
+    rate: Optional[str] = "+0%"    # e.g. "+10%" speeds up, "-10%" slows down
+    pitch: Optional[str] = "+0Hz"  # e.g. "-5Hz" for slightly lower pitch
 
-class SpeechToTextResponse(BaseModel):
+class STTResponse(BaseModel):
     text: str
     confidence: float
-    language: Optional[str] = "en"
+    language: str = "en"
 
-# Health check
-@app.get("/status")
-@app.get("/health")
-async def status():
+# ── TTS ───────────────────────────────────────────────────────────────────────
+
+async def _synthesize(text: str, voice_id: str, rate: str, pitch: str) -> bytes:
+    import edge_tts
+    buf = io.BytesIO()
+    communicate = edge_tts.Communicate(text, voice=voice_id, rate=rate, pitch=pitch)
+    async for chunk in communicate.stream():
+        if chunk["type"] == "audio":
+            buf.write(chunk["data"])
+    data = buf.getvalue()
+    if not data:
+        raise RuntimeError("edge-tts returned empty audio")
+    return data
+
+@app.post("/tts")
+async def text_to_speech(req: TTSRequest):
+    """Convert text to speech. Returns audio/mpeg (MP3)."""
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="text is required")
+
+    voice_id = VOICES.get(req.voice or "kilo", VOICES["kilo"])
+    text = req.text[:2000]  # cap length
+
+    try:
+        audio_bytes = await _synthesize(text, voice_id, req.rate or "+0%", req.pitch or "+0Hz")
+        return Response(
+            content=audio_bytes,
+            media_type="audio/mpeg",
+            headers={"Content-Disposition": "inline; filename=kilo_voice.mp3"}
+        )
+    except ImportError:
+        raise HTTPException(status_code=503, detail="edge-tts not installed. Run: pip install edge-tts")
+    except Exception as e:
+        logger.error("TTS error: %s", e)
+        raise HTTPException(status_code=500, detail=f"TTS failed: {e}")
+
+@app.get("/tts")
+async def text_to_speech_get(text: str, voice: str = "kilo", rate: str = "+0%", pitch: str = "+0Hz"):
+    """GET version — handy for testing in browser. Returns audio/mpeg."""
+    return await text_to_speech(TTSRequest(text=text, voice=voice, rate=rate, pitch=pitch))
+
+# ── STT ───────────────────────────────────────────────────────────────────────
+
+@app.post("/stt", response_model=STTResponse)
+async def speech_to_text(audio: UploadFile = File(...)):
+    """Convert speech to text. Supports WAV, MP3, OGG, M4A, WebM."""
+    if GEMINI_API_KEY:
+        return await _stt_gemini(audio)
+    raise HTTPException(
+        status_code=501,
+        detail="STT requires GEMINI_API_KEY env var. Set it on the deployment."
+    )
+
+async def _stt_gemini(audio: UploadFile) -> STTResponse:
+    """Use Gemini Flash to transcribe audio."""
+    try:
+        audio_bytes = await audio.read()
+        b64 = base64.b64encode(audio_bytes).decode()
+        mime = audio.content_type or "audio/webm"
+
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=GEMINI_API_KEY)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                types.Content(parts=[
+                    types.Part(inline_data=types.Blob(mime_type=mime, data=b64)),
+                    types.Part(text="Transcribe this audio exactly. Return only the spoken words, no commentary."),
+                ])
+            ],
+            config={"max_output_tokens": 500}
+        )
+        text = (response.text or "").strip()
+        return STTResponse(text=text, confidence=0.9, language="en")
+    except Exception as e:
+        logger.error("Gemini STT error: %s", e)
+        raise HTTPException(status_code=500, detail=f"STT failed: {e}")
+
+# ── Voice list ────────────────────────────────────────────────────────────────
+
+@app.get("/voices")
+async def list_voices():
+    """List available voice options."""
     return {
-        "status": "ok",
-        "stt_provider": STT_PROVIDER,
-        "tts_provider": TTS_PROVIDER,
-        "network_allowed": ALLOW_NETWORK
+        "voices": [
+            {"id": "kilo",      "name": "Kilo (default)",   "gender": "male",   "style": "clear & professional"},
+            {"id": "kilo-deep", "name": "Kilo Deep",        "gender": "male",   "style": "deeper & authoritative"},
+            {"id": "kilo-warm", "name": "Kilo Warm",        "gender": "male",   "style": "warmer & friendly"},
+            {"id": "aria",      "name": "Aria",             "gender": "female", "style": "professional"},
+            {"id": "jenny",     "name": "Jenny",            "gender": "female", "style": "conversational"},
+        ],
+        "default": "kilo"
     }
 
-# Speech-to-Text (STT)
-@app.post("/stt", response_model=SpeechToTextResponse)
-async def speech_to_text(audio: UploadFile = File(...)):
-    """
-    Convert speech audio to text using local Whisper model.
+# ── Health ────────────────────────────────────────────────────────────────────
 
-    Future implementation:
-    - Use faster-whisper or whisper.cpp for efficient local inference
-    - Support multiple audio formats (wav, mp3, ogg, m4a)
-    - Return confidence scores and language detection
-    """
-    if STT_PROVIDER == "none":
-        raise HTTPException(status_code=501, detail="STT not configured")
-
-    # Placeholder implementation
-    # TODO: Implement Whisper integration
-    return SpeechToTextResponse(
-        text="[STT not yet implemented - this is a placeholder response]",
-        confidence=0.0,
-        language="en"
-    )
-
-# Text-to-Speech (TTS)
-@app.post("/tts")
-async def text_to_speech(request: TextToSpeechRequest):
-    """
-    Convert text to speech audio using local Piper model.
-
-    Future implementation:
-    - Use Piper TTS for high-quality local synthesis
-    - Support multiple voices (male, female, different accents)
-    - Adjustable speaking rate
-    - Return audio as WAV or MP3
-    """
-    if TTS_PROVIDER == "none":
-        raise HTTPException(status_code=501, detail="TTS not configured")
-
-    # Placeholder implementation
-    # TODO: Implement Piper TTS integration
-    # For now, return a silent WAV header (44 bytes)
-    wav_header = bytes([
-        0x52, 0x49, 0x46, 0x46,  # "RIFF"
-        0x24, 0x00, 0x00, 0x00,  # ChunkSize
-        0x57, 0x41, 0x56, 0x45,  # "WAVE"
-        0x66, 0x6D, 0x74, 0x20,  # "fmt "
-        0x10, 0x00, 0x00, 0x00,  # Subchunk1Size
-        0x01, 0x00,              # AudioFormat (PCM)
-        0x01, 0x00,              # NumChannels (Mono)
-        0x44, 0xAC, 0x00, 0x00,  # SampleRate (44100)
-        0x88, 0x58, 0x01, 0x00,  # ByteRate
-        0x02, 0x00,              # BlockAlign
-        0x10, 0x00,              # BitsPerSample (16)
-        0x64, 0x61, 0x74, 0x61,  # "data"
-        0x00, 0x00, 0x00, 0x00   # Subchunk2Size
-    ])
-
-    return Response(
-        content=wav_header,
-        media_type="audio/wav",
-        headers={"Content-Disposition": "attachment; filename=speech.wav"}
-    )
-
-# Voice activity detection (future feature)
-@app.post("/vad")
-async def voice_activity_detection(audio: UploadFile = File(...)):
-    """
-    Detect speech presence in audio (useful for push-to-talk features).
-
-    Future implementation:
-    - Use WebRTC VAD or similar
-    - Return timestamps of speech segments
-    - Help reduce Whisper processing time by skipping silence
-    """
-    raise HTTPException(status_code=501, detail="VAD not yet implemented")
+@app.get("/health")
+@app.get("/status")
+async def health():
+    try:
+        import edge_tts  # noqa
+        tts_ready = True
+    except ImportError:
+        tts_ready = False
+    return {
+        "status": "ok",
+        "tts_ready": tts_ready,
+        "tts_provider": "edge-tts (Microsoft neural)",
+        "stt_ready": bool(GEMINI_API_KEY),
+        "stt_provider": "gemini-2.0-flash" if GEMINI_API_KEY else "not configured",
+        "default_voice": DEFAULT_VOICE,
+    }
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=9009)
+    uvicorn.run(app, host="0.0.0.0", port=9008)
