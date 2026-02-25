@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kilo-marketing
+  namespace: kilo-guardian
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kilo-marketing
+  template:
+    metadata:
+      labels:
+        app: kilo-marketing
+    spec:
+      containers:
+      - name: marketing
+        image: kilo/frontend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kilo-marketing
+  namespace: kilo-guardian
+spec:
+  selector:
+    app: kilo-marketing
+  ports:
+  - port: 80
+    targetPort: 80
