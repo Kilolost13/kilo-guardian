@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KILO Guardian - AI-Powered Personal Assistant System</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            text-align: center;
+            padding: 60px 20px;
+            color: white;
+        }
+        
+        h1 {
+            font-size: 3.5em;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .tagline {
+            font-size: 1.5em;
+            opacity: 0.95;
+            margin-bottom: 40px;
+        }
+        
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            padding: 40px 20px;
+        }
+        
+        .feature-card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+        }
+        
+        .feature-icon {
+            font-size: 3em;
+            margin-bottom: 20px;
+        }
+        
+        .feature-card h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.5em;
+        }
+        
+        .feature-card p {
+            color: #666;
+            line-height: 1.8;
+        }
+        
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            flex-wrap: wrap;
+            gap: 30px;
+            padding: 60px 20px;
+            color: white;
+            text-align: center;
+        }
+        
+        .stat {
+            flex: 1;
+            min-width: 200px;
+        }
+        
+        .stat-number {
+            font-size: 3em;
+            font-weight: bold;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .stat-label {
+            font-size: 1.2em;
+            opacity: 0.9;
+            margin-top: 10px;
+        }
+        
+        .cta-section {
+            text-align: center;
+            padding: 60px 20px;
+        }
+        
+        .cta-button {
+            display: inline-block;
+            background: white;
+            color: #667eea;
+            padding: 20px 50px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-size: 1.3em;
+            font-weight: bold;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            transition: all 0.3s ease;
+        }
+        
+        .cta-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 15px 40px rgba(0,0,0,0.3);
+        }
+        
+        footer {
+            text-align: center;
+            padding: 40px 20px;
+            color: white;
+            opacity: 0.8;
+        }
+        
+        .status-indicator {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            background: #00ff00;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚡ KILO Guardian</h1>
+            <p class="tagline">
+                <span class="status-indicator"></span>
+                Your AI-Powered Personal Assistant Ecosystem
+            </p>
+            <p style="font-size: 1.1em; opacity: 0.9;">
+                Intelligent automation, seamless integration, complete control
+            </p>
+        </header>
+        
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-number">17</div>
+                <div class="stat-label">Active Microservices</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">24/7</div>
+                <div class="stat-label">Always Available</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">100%</div>
+                <div class="stat-label">Self-Hosted</div>
+            </div>
+        </div>
+        
+        <div class="features">
+            <div class="feature-card">
+                <div class="feature-icon">🧠</div>
+                <h2>AI Brain</h2>
+                <p>Advanced language model integration with RAG capabilities, OCR, and intelligent tool orchestration for natural interaction.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🛡️</div>
+                <h2>Guardian System</h2>
+                <p>Unified plugin architecture managing reminders, habits, medications, and financial tracking with smart automation.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">📚</div>
+                <h2>Library of Truth</h2>
+                <p>Personal knowledge base with semantic search, version control, and intelligent information retrieval.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🎯</div>
+                <h2>ML Engine</h2>
+                <p>Machine learning models for pattern recognition, prediction, and intelligent automation of daily tasks.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">📹</div>
+                <h2>Vision & Voice</h2>
+                <p>Integrated camera and voice systems for multimodal interaction and environmental awareness.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🚁</div>
+                <h2>Drone Control</h2>
+                <p>Autonomous drone coordination with Meshtastic integration for extended capabilities.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🔒</div>
+                <h2>Security Monitor</h2>
+                <p>Real-time security monitoring and threat detection to protect your digital ecosystem.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🔌</div>
+                <h2>USB Transfer</h2>
+                <p>Secure encrypted file transfer system for safe data management across devices.</p>
+            </div>
+            
+            <div class="feature-card">
+                <div class="feature-icon">🌐</div>
+                <h2>API Gateway</h2>
+                <p>Centralized routing with Kubernetes integration and intelligent load balancing.</p>
+            </div>
+        </div>
+        
+        <div class="cta-section">
+            <a href="http://192.168.68.56:30002" class="cta-button" target="_blank">
+                Launch Dashboard →
+            </a>
+        </div>
+        
+        <footer>
+            <p><strong>KILO Guardian</strong> - Built with microservices architecture</p>
+            <p style="margin-top: 10px;">Powered by Kubernetes • Self-Hosted • Privacy First</p>
+            <p style="margin-top: 20px; font-size: 0.9em;">
+                System Status: <span style="color: #00ff00; font-weight: bold;">All Services Operational</span>
+            </p>
+        </footer>
+    </div>
+</body>
+</html>
